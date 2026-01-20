@@ -1,10 +1,13 @@
 pub mod api;
 pub mod services;
+use std::env;
 
 use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env::set_var("NODES_EXCLUDE", "[]"); 
+    env::set_var("N8N_BLOCK_NODES", "");//解除节点禁用
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
