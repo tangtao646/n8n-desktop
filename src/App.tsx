@@ -133,13 +133,15 @@ export default function App() {
   };
 
   if (status === "ready") {
-    // 关键修改：使用代理地址或保持原地址但已解决 CORS
+    // 直接重定向整个窗口到 n8n，避免跨域问题
+    window.location.href = "http://localhost:5678";
     return (
-      <iframe
-        src="http://localhost:5678"
-        style={{ width: "100vw", height: "100vh", border: "none" }}
-        title="n8n-ui"
-      />
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <h2 style={styles.title}>n8n Desktop</h2>
+          <p style={styles.statusText}>正在跳转到 n8n...</p>
+        </div>
+      </div>
     );
   }
 
