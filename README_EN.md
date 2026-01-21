@@ -2,7 +2,7 @@
 
 ![App Icon](app-icon.png)
 
-A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience.
+A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience. This project aims to simplify n8n installation and usage, offering one-click installation: no manual Node.js environment configuration required, no Docker installation needed.
 
 ## 📋 Important Notice
 
@@ -13,6 +13,22 @@ A desktop application for n8n built with Tauri, providing a cross-platform local
 4. **Infringement Handling**: If this project infringes your legitimate rights, please contact `taoge646@gmail.com`, and we will immediately delete the relevant repository.
 5. **Disclaimer**: Any consequences arising from the use of this project shall be borne by the user, and the project maintainers assume no responsibility.
 
+### Security Warning
+**Important Security Notice**: This project packages n8n with disabled official restrictions (such as ExecuteCommand nodes).
+
+**Security Risk Warnings**:
+1. **Command Injection Risk**: ExecuteCommand nodes allow execution of system commands, malicious workflows may cause data loss, system damage, or security vulnerabilities
+2. **Data Security**: Improper use may lead to sensitive data leakage
+
+**Usage Recommendations**:
+- Use only in trusted, isolated environments
+- Do not use in production environments or systems containing sensitive data
+- Carefully review all imported workflows, avoid executing code from unknown sources
+- Regularly backup important data
+
+**Disclaimer**:
+The developers of this project are not responsible for any data loss caused by using unsafe command injection through ExecuteCommand nodes. Users assume all risks.
+
 ### Open Source Licenses
 - The code portion of this project uses the MIT License
 - n8n core uses the [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md)
@@ -22,7 +38,6 @@ A desktop application for n8n built with Tauri, providing a cross-platform local
 
 - **Cross-Platform Support**: Windows, macOS, Linux full platform support
 - **Automatic Dependency Download**: Automatically downloads Node.js runtime and n8n core packages on first run
-- **One-Click Installation**: No manual Node.js environment configuration required, no docker installation needed
 - **Offline Usage**: Runs locally, protects data privacy
 
 ## 📦 Download & Installation

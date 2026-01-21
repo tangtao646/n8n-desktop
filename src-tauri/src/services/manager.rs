@@ -117,17 +117,17 @@ pub fn start_node(node_path: PathBuf, n8n_bin: PathBuf, user_data: PathBuf) -> R
         .arg("start")
         .env("N8N_USER_FOLDER", user_data.to_str().unwrap())
         // 关键环境变量：禁用交互模式
-        .env("N8N_DISABLE_INTERACTIVE_REPL", "true") 
+        .env("N8N_DISABLE_INTERACTIVE_REPL", "true")
         .env("N8N_BLOCK_IFRAME_EMBEDS", "false")
         .env("N8N_USE_SAMESITE_COOKIE_STRICT", "false")
-        .env("N8N_CORS_ALLOWED_ORIGINS", "*") 
+        .env("N8N_CORS_ALLOWED_ORIGINS", "*")
         .env("N8N_SECURE_COOKIE", "false")
         .env("N8N_USER_MANAGEMENT_DISABLED", "true")
         .env("SKIP_SETUP", "true")
         .env("N8N_PORT", "5678")
         .env("N8N_HOST", "127.0.0.1")
         // 核心修正：提供一个空的 stdin 防止 setRawMode 报错
-        .stdin(Stdio::null()) 
+        .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
@@ -137,7 +137,7 @@ pub fn start_node(node_path: PathBuf, n8n_bin: PathBuf, user_data: PathBuf) -> R
         cmd.creation_flags(0x08000000);
     }
 
-   let child = cmd.spawn().map_err(|e| format!("进程启动失败: {}", e))?;
+    let child = cmd.spawn().map_err(|e| format!("进程启动失败: {}", e))?;
     let mut manager = PROCESS_MANAGER.lock().unwrap();
     manager.set_child(child);
 
