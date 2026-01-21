@@ -36,7 +36,8 @@ pub fn get_node_url() -> Result<String, String> {
     // n8n requires Node.js >=20.19 <= 24.x
     // Using Node.js 20.19.0 which is the minimum supported version
     let version = "v20.19.0";
-    let base_url = "https://mirrors.huaweicloud.com/nodejs";
+    let base_url ="https://nodejs.org/dist/";
+    //let base_url = "https://mirrors.huaweicloud.com/nodejs"; //使用华为云镜像下载节点文件
     match (env::consts::OS, env::consts::ARCH) {
         ("macos", "aarch64") => Ok(format!(
             "{}/{}/node-{}-darwin-arm64.tar.gz",
