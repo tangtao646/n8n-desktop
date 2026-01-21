@@ -18,8 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 分开 macOS - Apple Silicon (ARM)
           - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
+            args: '--target aarch64-apple-darwin'
+            arch: 'aarch64'
+          # 分开 macOS - Intel (x86_64)
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            arch: 'x86_64'
           - platform: 'windows-latest'
             args: ''
           - platform: 'ubuntu-latest'
@@ -30,13 +36,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. 安装 pnpm，版本必须与本地 v10 一致
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      # 2. 设置 Node.js，并显式指定锁文件路径
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -47,7 +51,9 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          toolchain: stable
+          # 关键：根据当前矩阵安装对应的 Target
+          targets: ${{ matrix.platform == 'macos-latest' && (matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin') || '' }}
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
@@ -55,19 +61,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      # 3. 关键修正：使用 --no-frozen-lockfile 解决锁文件不兼容报错
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
-      # 4. 构建并发布
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 强制 Linux 只打 AppImage
+          TAURI_BUNDLE_TARGETS: ${{ matrix.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'n8n Desktop ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download this version.'
+          releaseBody: |
+            n8n Desktop ${{ github.ref_name }} 发布！
+            
+            - **macOS (M1/M2/M3)**: 下载 `aarch64.dmg`
+            - **macOS (Intel)**: 下载 `x64.dmg`
+            - **Windows**: 下载 `.exe`
+            - **Linux**: 下载 `.AppImage`
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
