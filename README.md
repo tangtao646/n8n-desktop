@@ -1,6 +1,6 @@
 # n8n Desktop
 
-![App Icon](app-icon.png)
+![App Icon](src-tauri/icons/Square150x150Logo.png)
 
 一个基于 Tauri 构建的 n8n 桌面应用程序，提供跨平台的本地工作流自动化体验。本项目旨在简化 n8n 的安装和使用，实现一键安装：无需手动配置 Node.js 环境，无需安装 Docker。
 

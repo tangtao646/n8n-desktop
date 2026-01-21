@@ -1,6 +1,6 @@
 # n8n Desktop
 
-![App Icon](app-icon.png)
+![App Icon](src-tauri/icons/Square150x150Logo.png)
 
 A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience. This project aims to simplify n8n installation and usage, offering one-click installation: no manual Node.js environment configuration required, no Docker installation needed.
 
