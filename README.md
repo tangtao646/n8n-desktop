@@ -30,7 +30,7 @@
 ## 📦 下载安装
 
 ### 最新版本
-访问 [Releases](https://github.com/your-username/n8n-desktop/releases) 页面下载对应平台的安装包：
+访问 [Releases](https://github.com/tangtao646/n8n-desktop/releases) 页面下载对应平台的安装包：
 
 - **macOS**: `.dmg` 文件（支持 Intel 和 Apple Silicon）
 - **Windows**: `.exe` 安装程序或 `.msi` 包
@@ -40,6 +40,19 @@
 - **macOS**: 10.15 (Catalina) 或更高版本
 - **Windows**: Windows 10 或更高版本（64位）
 - **Linux**: 支持 AppImage 的主流发行版
+
+### macOS 安装问题解决
+如果 macOS 系统提示"文件已损坏"或"打不开"，这是因为 macOS 的安全机制阻止了未签名的应用。解决方法：
+
+1. **打开终端** (Terminal)
+2. **执行以下命令**：
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/n8n-desktop.app
+```
+3. **输入管理员密码**（输入时不会显示字符）
+4. **重新打开应用**
+
+> **注意**：此命令会移除应用的隔离属性，仅适用于从可信来源下载的应用。
 
 ## 🛠️ 开发构建
 
@@ -51,7 +64,7 @@
 ### 本地开发
 ```bash
 # 克隆仓库
-git clone https://github.com/your-username/n8n-desktop.git
+git clone https://github.com/tangtao646/n8n-desktop.git
 cd n8n-desktop
 
 # 安装依赖
@@ -88,7 +101,7 @@ pnpm tauri build --target x86_64-unknown-linux-gnu # Linux
 
 
 ### 获取帮助
-- 查看 [Issues](https://github.com/your-username/n8n-desktop/issues) 页面
+- 查看 [Issues](https://github.com/tangtao646/n8n-desktop/issues) 页面
 - 提交新的 Issue 报告问题
 
 ## 🤝 贡献指南
