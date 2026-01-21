@@ -150,10 +150,13 @@ export default function App() {
             const isReady = await checkHealthViaProxy();
 
             if (isReady) {
-              setStatus("ready");
+              // 健康检查通过，等待 2 秒确保 n8n UI 完全就绪
               if (checkTimer) {
                 clearInterval(checkTimer);
               }
+              setTimeout(() => {
+                setStatus("ready");
+              }, 2000);
             } else {
               retryCount++;
               if (retryCount >= MAX_RETRIES) {
