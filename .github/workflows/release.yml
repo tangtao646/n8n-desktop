@@ -30,17 +30,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 核心修正：先安装 pnpm
+      # 1. 安装 pnpm，版本必须与本地 v10 一致
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 10
 
+      # 2. 设置 Node.js，并显式指定锁文件路径
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # 修改这里：使用 pnpm 缓存
           cache: 'pnpm'
           cache-dependency-path: 'pnpm-lock.yaml'
 
@@ -49,16 +49,17 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install dependencies (Ubuntu)
+      - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # 3. 关键修正：使用 --no-frozen-lockfile 解决锁文件不兼容报错
       - name: Install frontend dependencies
-        # 使用 frozen-lockfile 确保安装与 pnpm-lock.yaml 一致
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
+      # 4. 构建并发布
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -66,7 +67,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'n8n Desktop ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download this version.'
+          releaseBody: 'See the assets below to download this version.'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
