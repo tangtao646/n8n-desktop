@@ -2,148 +2,141 @@
 
 ![App Icon](src-tauri/icons/Square150x150Logo.png)
 
-一个基于 Tauri 构建的 n8n 桌面应用程序，提供跨平台的本地工作流自动化体验。本项目旨在简化 n8n 的安装和使用，实现一键安装：无需手动配置 Node.js 环境，无需安装 Docker。
+A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience. This project aims to simplify n8n installation and usage, offering one-click installation: no manual Node.js environment configuration required, no Docker installation needed.
 
-## 📋 重要声明
+## 📋 Important Notice
 
-### 版权与使用声明
-1. **项目性质**: 本项目是基于 [n8n](https://github.com/n8n-io/n8n) 开源项目打包的桌面应用程序，仅供个人学习、研究和测试使用。
-2. **非商业用途**: 本项目不得用于任何商业用途，包括但不限于销售、租赁、商业部署等。
-3. **知识产权**: n8n 及相关商标、版权归其原始所有者所有。本项目仅为技术封装，不拥有 n8n 的核心知识产权。
-4. **侵权处理**: 如本项目侵犯了您的合法权益，请联系 `taoge646@gmail.com`，我们将立即删除相关仓库。
-5. **免责声明**: 使用本项目产生的任何后果由使用者自行承担，项目维护者不承担任何责任。
+### Copyright and Usage Statement
+1. **Project Nature**: This project is a desktop application packaged based on the [n8n](https://github.com/n8n-io/n8n) open-source project, intended for personal learning, research, and testing only.
+2. **Non-Commercial Use**: This project must not be used for any commercial purposes, including but not limited to sales, leasing, commercial deployment, etc.
+3. **Intellectual Property**: n8n and related trademarks, copyrights belong to their original owners. This project is only a technical packaging and does not own the core intellectual property of n8n.
+4. **Infringement Handling**: If this project infringes your legitimate rights, please contact `taoge646@gmail.com`, and we will immediately delete the relevant repository.
+5. **Disclaimer**: Any consequences arising from the use of this project shall be borne by the user, and the project maintainers assume no responsibility.
 
-### 安全警告
-**重要安全声明**：本项目打包解禁了 n8n 官方的禁用节点（如：ExecuteCommand 等）。
+### Security Warning
+**Important Security Notice**: This project packages n8n with disabled official restrictions (such as ExecuteCommand nodes).
 
-**安全风险提示**：
-1. **命令注入风险**：ExecuteCommand 节点允许执行系统命令，恶意工作流可能导致数据丢失、系统损坏或安全漏洞
-2. **数据安全**：不当使用可能导致敏感数据泄露
+**Security Risk Warnings**:
+1. **Command Injection Risk**: ExecuteCommand nodes allow execution of system commands, malicious workflows may cause data loss, system damage, or security vulnerabilities
+2. **Data Security**: Improper use may lead to sensitive data leakage
 
-**使用建议**：
-- 仅在受信任的隔离环境中使用
-- 不要在生产环境或包含敏感数据的系统中使用
-- 仔细审查所有导入的工作流，避免执行未知来源的代码
-- 定期备份重要数据
+**Usage Recommendations**:
+- Use only in trusted, isolated environments
+- Do not use in production environments or systems containing sensitive data
+- Carefully review all imported workflows, avoid executing code from unknown sources
+- Regularly backup important data
 
-**免责声明**：
-因使用不安全命令注入 ExecuteCommand 节点造成数据损失的，本项目开发者概不负责。使用者需自行承担所有风险。
+**Disclaimer**:
+The developers of this project are not responsible for any data loss caused by using unsafe command injection through ExecuteCommand nodes. Users assume all risks.
 
-### 开源协议
-- 本项目代码部分采用 MIT 许可证
-- n8n 核心采用 [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md)
-- 请遵守各组件对应的开源协议
+### Open Source Licenses
+- The code portion of this project uses the MIT License
+- n8n core uses the [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md)
+- Please comply with the respective open-source licenses of each component
 
-## 🚀 功能特性
+## 🚀 Features
 
-- **跨平台支持**: Windows、macOS、Linux 全平台
-- **自动下载依赖**: 首次运行自动下载 Node.js 运行时和 n8n 核心包
-- **离线使用**: 本地运行，保护数据隐私
+- **Cross-Platform Support**: Windows, macOS, Linux full platform support
+- **Automatic Dependency Download**: Automatically downloads Node.js runtime and n8n core packages on first run
+- **Offline Usage**: Runs locally, protects data privacy
 
+## 📦 Download & Installation
 
+### Latest Version
+Visit the [Releases](https://github.com/tangtao646/n8n-desktop/releases) page to download the installation package for your platform:
 
-## 📦 下载安装
+- **macOS**: `.dmg` file (supports both Intel and Apple Silicon)
+- **Windows**: `.exe` installer or `.msi` package
+- **Linux**: `.AppImage` or `.deb` package
 
-### 最新版本
-访问 [Releases](https://github.com/tangtao646/n8n-desktop/releases) 页面下载对应平台的安装包：
+### System Requirements
+- **macOS**: 10.15 (Catalina) or later
+- **Windows**: Windows 10 or later (64-bit)
+- **Linux**: Mainstream distributions supporting AppImage
 
-- **macOS**: `.dmg` 文件（支持 Intel 和 Apple Silicon）
-- **Windows**: `.exe` 安装程序或 `.msi` 包
-- **Linux**: `.AppImage` 或 `.deb` 包
+### macOS Installation Troubleshooting
+If macOS shows "File is damaged" or "Cannot be opened", this is because macOS security mechanisms block unsigned applications. Solution:
 
-### 系统要求
-- **macOS**: 10.15 (Catalina) 或更高版本
-- **Windows**: Windows 10 或更高版本（64位）
-- **Linux**: 支持 AppImage 的主流发行版
-
-### macOS 安装问题解决
-如果 macOS 系统提示"文件已损坏"或"打不开"，这是因为 macOS 的安全机制阻止了未签名的应用。解决方法：
-
-1. **打开终端** (Terminal)
-2. **执行以下命令**：
+1. **Open Terminal**
+2. **Execute the following command**:
 ```bash
 sudo xattr -rd com.apple.quarantine /Applications/n8n-desktop.app
 ```
-3. **输入管理员密码**（输入时不会显示字符）
-4. **重新打开应用**
+3. **Enter administrator password** (characters won't be displayed while typing)
+4. **Reopen the application**
 
-> **注意**：此命令会移除应用的隔离属性，仅适用于从可信来源下载的应用。
+> **Note**: This command removes the quarantine attribute from the application and should only be used for applications downloaded from trusted sources.
 
-## 🛠️ 开发构建
+## 🛠️ Development & Building
 
-### 环境要求
+### Environment Requirements
 - Node.js 20+
 - Rust 1.70+
 - pnpm 8+
 
-### 本地开发
+### Local Development
 ```bash
-# 克隆仓库
+# Clone repository
 git clone https://github.com/tangtao646/n8n-desktop.git
 cd n8n-desktop
 
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# 开发模式运行
+# Run in development mode
 pnpm tauri dev
 ```
 
-### 构建应用
+### Building the Application
 ```bash
-# 构建所有平台
+# Build for all platforms
 pnpm tauri build
 
-# 构建特定平台
-pnpm tauri build --target universal-apple-darwin  # macOS 通用
+# Build for specific platforms
+pnpm tauri build --target universal-apple-darwin  # macOS universal
 pnpm tauri build --target x86_64-pc-windows-msi   # Windows
 pnpm tauri build --target x86_64-unknown-linux-gnu # Linux
 ```
 
-### 数据目录
-应用数据存储在用户目录下：
+### Data Directory
+Application data is stored in the user directory:
 - **macOS**: `~/Library/Application Support/n8n-desktop/`
 - **Windows**: `%APPDATA%\n8n-desktop\`
 - **Linux**: `~/.local/share/n8n-desktop/`
 
-包含：
-- `runtime/`: Node.js 运行时
-- `n8n/`: n8n 核心文件
-- `logs/`: 应用日志
-- `config/`: 配置文件
+Contains:
+- `runtime/`: Node.js runtime
+- `n8n/`: n8n core files
+- `logs/`: Application logs
+- `config/`: Configuration files
 
+### Getting Help
+- Check the [Issues](https://github.com/tangtao646/n8n-desktop/issues) page
+- Submit a new Issue to report problems
 
+## 🤝 Contribution Guidelines
 
+Welcome to submit Issues and Pull Requests!
 
-### 获取帮助
-- 查看 [Issues](https://github.com/tangtao646/n8n-desktop/issues) 页面
-- 提交新的 Issue 报告问题
+### Code Standards
+- TypeScript: Use ESLint and Prettier
+- Rust: Follow Rust official coding standards
+- Commit Messages: Use Conventional Commits
 
-## 🤝 贡献指南
+## 📄 License
 
-欢迎提交 Issue 和 Pull Request！
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## 🙏 Acknowledgments
 
-### 代码规范
-- TypeScript: 使用 ESLint 和 Prettier
-- Rust: 遵循 Rust 官方编码规范
-- 提交信息: 使用 Conventional Commits
+- [n8n](https://github.com/n8n-io/n8n) - Powerful workflow automation platform
+- [Tauri](https://tauri.app/) - Framework for building small, fast desktop applications
+- [React](https://reactjs.org/) - JavaScript library for building user interfaces
 
-## 📄 许可证
+## 📞 Contact
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+If you have questions or suggestions, please contact via:
+- **Email**: taoge646@gmail.com
+- **GitHub Issues**: [Submit Issue](https://github.com/tangtao646/n8n-desktop/issues)
 
-## 🙏 致谢
-
-- [n8n](https://github.com/n8n-io/n8n) - 强大的工作流自动化平台
-- [Tauri](https://tauri.app/) - 构建小型、快速桌面应用的框架
-- [React](https://reactjs.org/) - 用于构建用户界面的 JavaScript 库
-
-## 📞 联系方式
-
-如有问题或建议，请通过以下方式联系：
-- **邮箱**: taoge646@gmail.com
-- **GitHub Issues**: [提交 Issue](https://github.com/tangtao646/n8n-desktop/issues)
-
-
-**再次提醒**: 本项目仅供个人学习使用，请勿用于商业用途。尊重开源软件的知识产权，遵守相关许可证规定。
+**Reminder**: This project is for personal learning use only, do not use for commercial purposes. Respect the intellectual property of open-source software and comply with relevant license regulations.
