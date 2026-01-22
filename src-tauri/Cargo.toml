@@ -1,6 +1,6 @@
 [package]
 name = "n8n-desktop"
-version = "1.0.1"
+version = "1.0.0"
 description = "Desktop application for n8n workflow automation"
 authors = ["you"]
 edition = "2021"
@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.1.1", features = [] }
+
 
 [dependencies]
 # 1. 核心库：使用原始版本

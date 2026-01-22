@@ -1,0 +1,2 @@
+node scripts/sync-version.cjs
+git add src-tauri/Cargo.toml src-tauri/tauri.conf.json
