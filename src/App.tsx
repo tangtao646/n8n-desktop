@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useI18n } from "./i18n/context";
 import "./App.css";
 
 type Status =
@@ -13,6 +14,7 @@ type Status =
   | "error";            // 发生错误
 
 export default function App() {
+  const { t } = useI18n();
   const [status, setStatus] = useState<Status>("checking");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -34,7 +36,7 @@ export default function App() {
       }
       return false;
     } catch (err) {
-      console.log("n8n 健康检查失败:", err);
+      console.log("n8n health check failed:", err);
       return false;
     }
   };
@@ -160,7 +162,7 @@ export default function App() {
             } else {
               retryCount++;
               if (retryCount >= MAX_RETRIES) {
-                setErrorMsg("n8n 服务启动超时，请检查端口是否被占用");
+                setErrorMsg(t("errors.timeout"));
                 setStatus("error");
                 if (checkTimer) {
                   clearInterval(checkTimer);
@@ -168,7 +170,7 @@ export default function App() {
               }
             }
           } catch (error) {
-            console.log("健康检查轮询出错:", error);
+            console.log("Health check polling error:", error);
             retryCount++;
           }
         }, 2000);
@@ -176,7 +178,7 @@ export default function App() {
         // 设置总超时（60秒）
         setTimeout(() => {
           if (status !== "ready" && checkTimer) {
-            setErrorMsg("启动超时，请检查网络连接或重启应用");
+            setErrorMsg(t("errors.startup_timeout"));
             setStatus("error");
             clearInterval(checkTimer);
           }
@@ -197,18 +199,18 @@ export default function App() {
       if (unlistenExtractionStart) unlistenExtractionStart();
       if (checkTimer) clearInterval(checkTimer);
     };
-  }, []);
+  }, [t]);
 
   // 状态显示逻辑
   const renderStatusText = () => {
     switch (status) {
-      case "checking": return "正在检查系统环境...";
-      case "preparing_engine": return `正在准备 Node 引擎... ${progress}%`;
-      case "downloading_n8n": return `正在下载 n8n 资源... ${progress}%`;
-      case "extracting": return "正在解压资源包...";
-      case "starting": return "正在启动 n8n 服务...";
-      case "error": return `启动失败: ${errorMsg}`;
-      default: return "正在载入界面...";
+      case "checking": return t("status.checking");
+      case "preparing_engine": return t("status.preparing_engine", { progress });
+      case "downloading_n8n": return t("status.downloading_n8n", { progress });
+      case "extracting": return t("status.extracting");
+      case "starting": return t("status.starting");
+      case "error": return t("status.error", { error: errorMsg });
+      default: return t("status.loading");
     }
   };
 
@@ -218,8 +220,8 @@ export default function App() {
     return (
       <div className="n8n-container">
         <div className="n8n-card">
-          <h2 className="n8n-title">n8n Desktop</h2>
-          <p className="n8n-status-text">正在跳转到 n8n...</p>
+          <h2 className="n8n-title">{t("app.title")}</h2>
+          <p className="n8n-status-text">{t("app.redirecting")}</p>
         </div>
       </div>
     );
@@ -228,7 +230,7 @@ export default function App() {
   return (
     <div className="n8n-container">
       <div className="n8n-card">
-        <h2 className="n8n-title">n8n Desktop</h2>
+        <h2 className="n8n-title">{t("app.title")}</h2>
 
         {status !== "error" ? (
           <>
@@ -252,7 +254,7 @@ export default function App() {
               }}
               className="n8n-retry-btn"
             >
-              重试
+              {t("app.retry")}
             </button>
           </div>
         )}
