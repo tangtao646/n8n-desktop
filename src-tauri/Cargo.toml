@@ -1,6 +1,6 @@
 [package]
 name = "n8n-desktop"
-version = "1.0.0"
+version = "1.0.2"
 description = "Desktop application for n8n workflow automation"
 authors = ["you"]
 edition = "2021"
