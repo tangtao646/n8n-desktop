@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "n8n-desktop"
-version = "1.0.0"
+version = "1.0.2"
 dependencies = [
  "flate2",
  "futures-util",
