@@ -12,12 +12,27 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
+            // n8n 核心功能
             api::commands::is_installed,
             api::commands::setup_runtime,
             api::commands::setup_n8n,
             api::commands::launch_n8n,
+            api::commands::shutdown_n8n,
             api::commands::proxy_health_check,
-            api::commands::shutdown_n8n
+            // 隧道功能
+            api::commands::start_tunnel,
+            api::commands::stop_tunnel,
+            api::commands::get_tunnel_status,
+            api::commands::copy_tunnel_url,
+            api::commands::get_tunnel_config,
+            api::commands::update_tunnel_config,
+            api::commands::load_tunnel_config_on_start,
+            api::commands::check_tunnel_health,
+            api::commands::recover_tunnel,
+            api::commands::get_tunnel_errors,
+            // cloudflared 管理
+            api::commands::check_cloudflared_version,
+            api::commands::clear_cloudflared_cache,
         ]);
 
     builder
