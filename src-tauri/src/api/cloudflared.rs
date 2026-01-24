@@ -269,6 +269,15 @@ pub async fn check_cloudflared_version<R: Runtime>(app: AppHandle<R>) -> Result<
     })
 }
 
+/// 下载 cloudflared 二进制文件
+pub async fn download_cloudflared<R: Runtime>(app: AppHandle<R>, window: Window<R>) -> Result<(), String> {
+    // 使用 get_or_download_cloudflared 函数，它会自动处理下载
+    match get_or_download_cloudflared(&app, Some(window)).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to download cloudflared: {}", e)),
+    }
+}
+
 /// 清理 cloudflared 缓存
 pub async fn clear_cloudflared_cache<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let app_data_dir = app.path()

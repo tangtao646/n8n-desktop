@@ -68,6 +68,12 @@ pub async fn copy_tunnel_url<R: Runtime>(app: AppHandle<R>) -> Result<(), String
     tunnel::copy_tunnel_url(app).await
 }
 
+/// 向后兼容的包装函数 - 下载 cloudflared 二进制文件
+#[tauri::command]
+pub async fn download_cloudflared<R: Runtime>(app: AppHandle<R>, window: Window<R>) -> Result<(), String> {
+    cloudflared::download_cloudflared(app, window).await
+}
+
 /// 向后兼容的包装函数 - 检查 cloudflared 版本
 #[tauri::command]
 pub async fn check_cloudflared_version<R: Runtime>(app: AppHandle<R>) -> Result<CloudflaredVersionInfo, String> {
@@ -124,4 +130,14 @@ pub async fn get_tunnel_errors<R: Runtime>(app: AppHandle<R>) -> Result<Vec<Tunn
 #[tauri::command]
 pub async fn proxy_health_check() -> Result<String, String> {
     n8n_core::proxy_health_check().await
+}
+
+/// 切换侧边栏状态
+#[tauri::command]
+pub async fn toggle_sidebar<R: Runtime>(
+    _window: Window<R>,
+) -> Result<bool, String> {
+    // 这里可以添加实际的布局调整逻辑
+    // 目前先返回一个简单的状态切换
+    Ok(true)
 }

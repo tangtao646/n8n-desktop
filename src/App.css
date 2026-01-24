@@ -146,3 +146,749 @@ body {
   background-color: #e55a48;
   transform: translateY(-1px);
 }
+
+/* 隧道管理器样式 */
+.n8n-ready-section {
+  margin-top: 20px;
+}
+
+.n8n-ready-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.n8n-ready-icon {
+  width: 32px;
+  height: 32px;
+  background-color: #10b981;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: bold;
+  margin-right: 12px;
+}
+
+.n8n-ready-text {
+  font-size: 18px;
+  color: #333;
+  font-weight: 500;
+}
+
+.n8n-action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.n8n-primary-btn {
+  padding: 12px 24px;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.n8n-primary-btn:hover {
+  background-color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.n8n-secondary-btn {
+  padding: 12px 24px;
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.n8n-secondary-btn:hover {
+  background-color: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.n8n-tunnel-info {
+  background-color: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.n8n-tunnel-label {
+  font-size: 14px;
+  color: #0369a1;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.n8n-tunnel-url {
+  display: block;
+  font-size: 14px;
+  color: #0284c7;
+  text-decoration: none;
+  word-break: break-all;
+  margin-bottom: 12px;
+}
+
+.n8n-tunnel-url:hover {
+  text-decoration: underline;
+}
+
+.n8n-tunnel-btn {
+  padding: 8px 16px;
+  background-color: #0ea5e9;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.n8n-tunnel-btn:hover {
+  background-color: #0284c7;
+}
+
+.n8n-tunnel-manager-section {
+  margin-top: 20px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 20px;
+}
+
+/* 隧道管理器组件样式 */
+.tunnel-manager {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.tunnel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.tunnel-header h3 {
+  font-size: 18px;
+  color: #333;
+  margin: 0;
+}
+
+.tunnel-card {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.tunnel-status {
+  margin-bottom: 12px;
+}
+
+.text-green-600 {
+  color: #059669;
+}
+
+.text-yellow-600 {
+  color: #d97706;
+}
+
+.text-red-600 {
+  color: #dc2626;
+}
+
+.text-gray-600 {
+  color: #475569;
+}
+
+.tunnel-config {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.tunnel-config h4 {
+  font-size: 16px;
+  color: #333;
+  margin: 0 0 12px 0;
+}
+
+/* 响应式调整 */
+@media (max-width: 480px) {
+  .n8n-card {
+    width: 90%;
+    padding: 24px;
+  }
+  
+  .n8n-action-buttons {
+    flex-direction: column;
+  }
+  
+  .n8n-primary-btn,
+  .n8n-secondary-btn {
+    width: 100%;
+  }
+}
+
+/* 侧边栏面板样式 */
+.sidebar-panel {
+  width: 300px;
+  height: 100vh;
+  background-color: #ffffff;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+/* 折叠状态 - 完全隐藏，只显示边缘按钮 */
+.sidebar-panel.collapsed {
+  width: 0;
+  overflow: visible; /* 允许按钮显示 */
+  border-right: none;
+}
+
+.sidebar-panel.collapsed .sidebar-header {
+  position: fixed; /* 使用 fixed 定位确保在窗口上 */
+  left: 0;
+  top: 50%; /* 垂直居中 */
+  transform: translateY(-50%); /* 调整居中位置 */
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  background-color: rgba(255, 255, 255, 0.95);
+  border-radius: 0 8px 8px 0; /* 右侧圆角 */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  border: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-right: 1px solid #e2e8f0;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sidebar-panel.collapsed .sidebar-header:hover {
+  background-color: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  width: 44px;
+}
+
+.sidebar-panel.collapsed .sidebar-toggle-btn {
+  transform: rotate(180deg);
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sidebar-title {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-title h2 {
+  margin: 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.sidebar-toggle-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background-color: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.sidebar-toggle-btn:hover {
+  background-color: #e2e8f0;
+}
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px;
+}
+
+.sidebar-panel.collapsed .sidebar-tabs {
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 8px;
+}
+
+.sidebar-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.sidebar-panel.collapsed .sidebar-tab {
+  padding: 10px;
+  flex: none;
+  width: 100%;
+}
+
+.sidebar-tab:hover {
+  background-color: #f1f5f9;
+}
+
+.sidebar-tab.active {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.tab-icon {
+  font-size: 16px;
+}
+
+.sidebar-panel.collapsed .tab-icon {
+  font-size: 18px;
+}
+
+.tab-text {
+  font-weight: 500;
+}
+
+.sidebar-panel.collapsed .tab-text {
+  display: none;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* 隧道标签页样式 */
+.tunnel-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tunnel-tab .tunnel-manager.compact {
+  margin: 0;
+}
+
+.tunnel-tab .tunnel-manager.compact .tunnel-card {
+  padding: 12px;
+  margin-bottom: 0;
+}
+
+.tunnel-tab .tunnel-manager.compact .tunnel-header h3 {
+  font-size: 16px;
+}
+
+/* n8n 状态卡片 */
+.n8n-status-card {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.n8n-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.n8n-status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-item .label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.status-item .value {
+  font-size: 13px;
+  color: #334155;
+  word-break: break-all;
+}
+
+.status-item .value.link {
+  color: #0369a1;
+  text-decoration: none;
+}
+
+.status-item .value.link:hover {
+  text-decoration: underline;
+}
+
+.n8n-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.2s ease;
+}
+
+.action-btn.primary {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.action-btn.primary:hover {
+  background-color: #2563eb;
+}
+
+.action-btn.primary:disabled {
+  background-color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.action-btn.secondary {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.action-btn.secondary:hover {
+  background-color: #e2e8f0;
+}
+
+/* 设置标签页样式 */
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-section {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 16px;
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+}
+
+.setting-item {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setting-label {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.setting-input {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 13px;
+  background-color: white;
+}
+
+/* 关于标签页样式 */
+.about-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.about-header {
+  text-align: center;
+  padding: 16px 0;
+}
+
+.app-icon {
+  width: 48px;
+  height: 48px;
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: bold;
+  margin: 0 auto 12px;
+}
+
+.about-info {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.info-section {
+  background-color: #f8fafc;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.info-item:last-child {
+  margin-bottom: 0;
+}
+
+.info-item .label {
+  color: #64748b;
+}
+
+.info-item .value {
+  color: #334155;
+  font-weight: 500;
+}
+
+.about-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 底部状态栏 */
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #f8fafc;
+  min-height: 48px;
+}
+
+.sidebar-panel.collapsed .sidebar-footer {
+  padding: 12px 8px;
+  justify-content: center;
+}
+
+.footer-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-status-collapsed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot.running {
+  background-color: #10b981;
+}
+
+.status-dot.stopped {
+  background-color: #ef4444;
+}
+
+.status-text {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.footer-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.footer-btn:hover {
+  color: #334155;
+}
+
+/* 主容器布局 */
+.main-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.main-content {
+  flex: 1;
+  height: 100%;
+  background-color: #f4f7f9;
+  transition: margin-left 0.3s ease;
+  position: relative;
+}
+
+/* 侧边栏折叠时，主内容区域扩展 */
+.main-content.expanded {
+  /* flex: 1 会自动调整宽度，不需要额外设置 */
+}
+
+/* 折叠状态下的 iframe 容器 - 填满整个右侧区域 */
+.main-content.expanded .webview-container {
+  width: 100%;
+  height: 100%;
+  /* 移除之前的居中样式，让iframe填满整个右侧区域 */
+  max-width: none;
+  margin: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+/* 非折叠状态下的 iframe 保持全宽 */
+.main-content:not(.expanded) .webview-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* WebView 容器 */
+.webview-container {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* iframe 加载状态 */
+.iframe-loading {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #f8fafc;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.iframe-loading p {
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* iframe 错误回退 */
+.iframe-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #fef2f2;
+  padding: 20px;
+}
+
+.fallback-content {
+  text-align: center;
+  max-width: 400px;
+}
+
+.fallback-content h3 {
+  color: #dc2626;
+  margin-bottom: 12px;
+  font-size: 18px;
+}
+
+.fallback-content p {
+  color: #57534e;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.fallback-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}

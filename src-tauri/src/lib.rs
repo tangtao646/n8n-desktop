@@ -6,7 +6,7 @@ use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env::set_var("NODES_EXCLUDE", "[]"); 
+    env::set_var("NODES_EXCLUDE", "[]");
     env::set_var("N8N_BLOCK_NODES", "");//解除节点禁用
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -31,9 +31,23 @@ pub fn run() {
             api::commands::recover_tunnel,
             api::commands::get_tunnel_errors,
             // cloudflared 管理
+            api::commands::download_cloudflared,
             api::commands::check_cloudflared_version,
             api::commands::clear_cloudflared_cache,
-        ]);
+            // 侧边栏管理
+            api::commands::toggle_sidebar,
+        ])
+        .on_window_event(|_window, event| {
+            match event {
+                tauri::WindowEvent::Resized(_) => {
+                    // 窗口大小改变时，可以在这里触发布局更新
+                    // 由于我们是单Webview，可以通过事件通知前端
+                    // 这里暂时只记录日志
+                    println!("Window resized, potential layout update needed");
+                }
+                _ => {}
+            }
+        });
 
     builder
         .build(tauri::generate_context!())

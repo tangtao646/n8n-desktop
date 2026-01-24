@@ -284,7 +284,11 @@ pub async fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 }
 
 pub async fn proxy_health_check() -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))  // 增加超时时间到5秒
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    
     let endpoints = [
         "http://localhost:5678/healthz",
         "http://127.0.0.1:5678/healthz",
@@ -292,17 +296,53 @@ pub async fn proxy_health_check() -> Result<String, String> {
         "http://127.0.0.1:5678/",
     ];
     
-    for endpoint in endpoints.iter() {
-        match client.get(*endpoint).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    return Ok(format!("healthy - {}", response.status()));
+    // 重试逻辑：最多重试3次，每次间隔500ms
+    let max_retries = 3;
+    let mut last_error = None;
+    
+    for retry in 0..max_retries {
+        for endpoint in endpoints.iter() {
+            match client.get(*endpoint).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    
+                    // 处理瞬态错误：502, 503, 504 可以重试
+                    if status.is_success() {
+                        // 尝试读取响应体以获取更多信息
+                        let body_text = response.text().await.unwrap_or_default();
+                        return Ok(format!("healthy - {} - {}", status, body_text));
+                    } else if retry < max_retries - 1 &&
+                              (status == 502 || status == 503 || status == 504) {
+                        // 瞬态错误，记录并继续重试
+                        println!("健康检查遇到瞬态错误 {}，重试 {}/{}", status, retry + 1, max_retries);
+                        last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        continue;
+                    } else {
+                        last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
+                    }
+                }
+                Err(e) => {
+                    // 网络错误也可以重试
+                    if retry < max_retries - 1 {
+                        println!("健康检查网络错误: {}，重试 {}/{}", e, retry + 1, max_retries);
+                        last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                        continue;
+                    } else {
+                        last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
+                    }
                 }
             }
-            Err(_) => continue,
+        }
+        
+        // 如果所有端点都失败了，等待一下再重试
+        if retry < max_retries - 1 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
     }
-    Err("n8n 服务未响应".to_string())
+    
+    Err(format!("n8n 服务未响应: {}", last_error.unwrap_or_else(|| "未知错误".to_string())))
 }
 
 /// 关闭 n8n 进程
