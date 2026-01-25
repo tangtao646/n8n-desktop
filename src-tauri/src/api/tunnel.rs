@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use std::sync::{Arc, Mutex};
 use regex::Regex;
 use std::process::{Command, Stdio};
@@ -114,6 +114,48 @@ pub(crate) static TUNNEL_RUNNING: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new
 pub(crate) static TUNNEL_CONFIG: Lazy<Arc<Mutex<TunnelConfig>>> = Lazy::new(|| Arc::new(Mutex::new(TunnelConfig::default())));
 
 // --- 内部辅助函数 ---
+
+/// 处理隧道URL匹配逻辑
+fn process_tunnel_url_match<R: Runtime>(
+    url_match: &regex::Match,
+    is_temporary: bool,
+    app_clone: &AppHandle<R>,
+) -> bool {
+    let url = url_match.as_str().to_string();
+    
+    // 验证URL
+    let is_valid_url = if is_temporary {
+        // 临时域名验证：必须严格以 .trycloudflare.com 结尾，并且不包含 cloudflare.com
+        url.ends_with(".trycloudflare.com") && !url.contains("cloudflare.com")
+    } else {
+        // 自定义域名验证：必须包含协议，不是cloudflare.com相关域名，也不是临时域名
+        (url.starts_with("http://") || url.starts_with("https://"))
+            && !url.contains("cloudflare.com")
+            && !url.ends_with(".trycloudflare.com")
+    };
+    
+    if !is_valid_url {
+        return false;
+    }
+    
+    let url_type = if is_temporary { "temporary" } else { "custom domain" };
+    println!("Found {} tunnel URL: {}", url_type, url);
+    
+    // 更新状态
+    {
+        let mut url_guard = TUNNEL_URL.lock().unwrap();
+        *url_guard = Some(url.clone());
+    }
+    
+    // 保存配置并发送事件
+    let _ = update_last_url(app_clone, &url);
+    let _ = app_clone.emit("tunnel-update", TunnelEvent::with_url("Online", url.clone()));
+    
+    // 注入环境变量并重启 n8n
+    restart_n8n_with_env(app_clone, &url);
+    
+    true
+}
 
 /// 保存隧道配置到文件
 fn save_tunnel_config<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -355,46 +397,13 @@ pub async fn start_tunnel<R: Runtime>(
                     // 先尝试匹配临时域名（必须严格以 .trycloudflare.com 结尾）
                     // 使用 find 而不是 captures，因为 URL 可能被其他字符包围
                     if let Some(url_match) = regex_temp.find(&l) {
-                        let url = url_match.as_str().to_string();
-                        // 额外验证：确保 URL 确实以 .trycloudflare.com 结尾，并且不包含 cloudflare.com
-                        if url.ends_with(".trycloudflare.com") && !url.contains("cloudflare.com") {
-                            println!("Found temporary tunnel URL: {}", url);
-                            found_url = true;
-                            
-                            // 更新状态
-                            {
-                                let mut url_guard = TUNNEL_URL.lock().unwrap();
-                                *url_guard = Some(url.clone());
-                            }
-                            
-                            let _ = update_last_url(&app_clone, &url);
-                            let _ = app_clone.emit("tunnel-update", TunnelEvent::with_url("Online", url.clone()));
-                            
-                            // 注入环境变量并重启 n8n
-                            restart_n8n_with_env(&app_clone, &url);
-                        }
+                        found_url = process_tunnel_url_match(&url_match, true, &app_clone);
                     }
+                    
                     // 如果没有找到临时域名，尝试匹配自定义域名
-                    else if let Some(url_match) = regex_custom.find(&l) {
-                        let url = url_match.as_str().to_string();
-                        // 检查是否是有效的 URL（包含协议）并且不是 cloudflare.com 相关域名
-                        if (url.starts_with("http://") || url.starts_with("https://"))
-                            && !url.contains("cloudflare.com")
-                            && !url.ends_with(".trycloudflare.com") {
-                            println!("Found custom domain URL: {}", url);
-                            found_url = true;
-                            
-                            // 更新状态
-                            {
-                                let mut url_guard = TUNNEL_URL.lock().unwrap();
-                                *url_guard = Some(url.clone());
-                            }
-                            
-                            let _ = update_last_url(&app_clone, &url);
-                            let _ = app_clone.emit("tunnel-update", TunnelEvent::with_url("Online", url.clone()));
-                            
-                            // 注入环境变量并重启 n8n
-                            restart_n8n_with_env(&app_clone, &url);
+                    if !found_url {
+                        if let Some(url_match) = regex_custom.find(&l) {
+                            found_url = process_tunnel_url_match(&url_match, false, &app_clone);
                         }
                     }
                 }

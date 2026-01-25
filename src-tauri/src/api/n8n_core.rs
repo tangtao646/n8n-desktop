@@ -5,10 +5,36 @@ use reqwest;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
+
+// --- 常量定义 ---
+
+/// 默认禁用的节点列表
+const DEFAULT_BLOCKED_NODES: &str = r#"["n8n-nodes-base.executeCommand"]"#;
+const DEFAULT_BLOCKED_NODES_NAMES: &str = "executeCommand";
+
+/// GitHub API 相关常量
+const GITHUB_API_URL: &str =
+    "https://api.github.com/repos/tangtao646/n8n-core-builder/releases/latest";
+const GITHUB_USER_AGENT: &str = "n8n-desktop";
+const GITHUB_ACCEPT_HEADER: &str = "application/vnd.github.v3+json";
+
+/// 代理下载前缀
+const GH_PROXY_PREFIX: &str = "https://gh-proxy.com/";
+const N8N_CORE_BASE_URL: &str =
+    "https://github.com/tangtao646/n8n-core-builder/releases/latest/download";
+
+/// 健康检查端点
+const HEALTH_CHECK_ENDPOINTS: [&str; 4] = [
+    "http://localhost:5678/healthz",
+    "http://127.0.0.1:5678/healthz",
+    "http://localhost:5678/",
+    "http://127.0.0.1:5678/",
+];
 
 // --- 全局状态 ---
 
@@ -17,9 +43,27 @@ static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // --- 内部辅助函数 ---
 
+/// 确定最终的隧道 URL（使用卫语句简化嵌套逻辑）
+fn determine_tunnel_url(
+    use_custom_domain: bool,
+    custom_domain: Option<String>,
+    tunnel_url: Option<String>,
+) -> Option<String> {
+    // 卫语句：如果未启用自定义域名，直接返回隧道 URL
+    if !use_custom_domain {
+        return tunnel_url;
+    }
+
+    // 处理自定义域名逻辑
+    match custom_domain {
+        Some(domain) if !domain.trim().is_empty() => Some(domain),
+        _ => tunnel_url, // 自定义域名为空或 None，回退到隧道 URL
+    }
+}
+
 /// 构造 n8n 进程的环境变量映射
 pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
-    use crate::api::tunnel::{TUNNEL_RUNNING, TUNNEL_URL, TUNNEL_CONFIG};
+    use crate::api::tunnel::{TUNNEL_CONFIG, TUNNEL_RUNNING, TUNNEL_URL};
     use std::collections::HashMap;
 
     let mut envs = HashMap::new();
@@ -30,11 +74,15 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
         *running_guard
     };
 
+    // 卫语句：如果隧道未启用，跳过隧道相关环境变量设置
     if tunnel_enabled {
         // 检查是否使用自定义域名
         let (use_custom_domain, custom_domain) = {
             let config_guard = TUNNEL_CONFIG.lock().unwrap();
-            (config_guard.use_custom_domain, config_guard.custom_domain.clone())
+            (
+                config_guard.use_custom_domain,
+                config_guard.custom_domain.clone(),
+            )
         };
 
         let tunnel_url = {
@@ -42,44 +90,14 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
             url_guard.clone()
         };
 
-        // 固定域名优先级逻辑：如果启用自定义域名且域名不为空，使用自定义域名
-        // 只有在未配置固定域名时，才使用从日志抓取的临时域名
-        let final_url = if use_custom_domain {
-            if let Some(domain) = custom_domain {
-                if !domain.trim().is_empty() {
-                    // 使用固定域名
-                    domain
-                } else {
-                    // 自定义域名启用但为空，回退到隧道 URL
-                    if let Some(url) = tunnel_url {
-                        url
-                    } else {
-                        // 如果没有 URL，不设置环境变量
-                        return envs;
-                    }
-                }
-            } else {
-                // 自定义域名启用但为 None，回退到隧道 URL
-                if let Some(url) = tunnel_url {
-                    url
-                } else {
-                    // 如果没有 URL，不设置环境变量
-                    return envs;
-                }
-            }
-        } else {
-            // 未启用自定义域名，使用隧道 URL
-            if let Some(url) = tunnel_url {
-                url
-            } else {
-                // 如果没有 URL，不设置环境变量
-                return envs;
-            }
-        };
-
-        envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
-        envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
-        envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
+        // 使用辅助函数确定最终 URL
+        if let Some(final_url) = determine_tunnel_url(use_custom_domain, custom_domain, tunnel_url)
+        {
+            envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
+            envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
+            envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
+        }
+        // 如果没有有效的 URL，不设置环境变量（保持 envs 为空）
     }
 
     // 条件 B: 节点解禁开关 nodes_unlocked
@@ -94,10 +112,14 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
         envs.insert("N8N_BLOCK_NODES".to_string(), "".to_string());
     } else {
         // 禁用节点解禁：设置预设的禁用列表
-        // 这里可以配置需要禁用的节点列表，例如某些高风险节点
-        // 示例：禁用 "n8n-nodes-base.executeCommand"
-        envs.insert("NODES_EXCLUDE".to_string(), r#"["n8n-nodes-base.executeCommand"]"#.to_string());
-        envs.insert("N8N_BLOCK_NODES".to_string(), "executeCommand".to_string());
+        envs.insert(
+            "NODES_EXCLUDE".to_string(),
+            DEFAULT_BLOCKED_NODES.to_string(),
+        );
+        envs.insert(
+            "N8N_BLOCK_NODES".to_string(),
+            DEFAULT_BLOCKED_NODES_NAMES.to_string(),
+        );
     }
 
     envs
@@ -128,75 +150,66 @@ pub fn calculate_file_sha256(file_path: &Path) -> Result<String, String> {
 /// 如果 API 请求失败（如 403 限制），返回 None 表示跳过验证
 pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, String> {
     let client = reqwest::Client::new();
-    let api_url = "https://api.github.com/repos/tangtao646/n8n-core-builder/releases/latest";
+    let file_name = format!("n8n-core-{}.zip", platform);
 
-    let response = match client
-        .get(api_url)
-        .header("User-Agent", "n8n-desktop")
-        .header("Accept", "application/vnd.github.v3+json")
+    // 发送 API 请求
+    let response = client
+        .get(GITHUB_API_URL)
+        .header("User-Agent", GITHUB_USER_AGENT)
+        .header("Accept", GITHUB_ACCEPT_HEADER)
         .send()
         .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
+        .map_err(|e| {
             println!("GitHub API 请求失败，跳过 SHA256 验证: {}", e);
-            return Ok(None); // 跳过验证，直接下载
-        }
-    };
+            e.to_string()
+        })?;
 
+    // 检查响应状态
     if !response.status().is_success() {
         println!(
             "GitHub API 返回错误 {}，跳过 SHA256 验证",
             response.status()
         );
-        return Ok(None); // 跳过验证，直接下载
+        return Ok(None);
     }
 
-    let text = match response.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            println!("读取 GitHub 响应失败，跳过 SHA256 验证: {}", e);
-            return Ok(None); // 跳过验证，直接下载
-        }
-    };
+    // 解析响应
+    let text = response.text().await.map_err(|e| {
+        println!("读取 GitHub 响应失败，跳过 SHA256 验证: {}", e);
+        e.to_string()
+    })?;
 
-    let json: Value = match serde_json::from_str(&text) {
-        Ok(j) => j,
-        Err(e) => {
-            println!("解析 GitHub JSON 失败，跳过 SHA256 验证: {}", e);
-            return Ok(None); // 跳过验证，直接下载
-        }
-    };
+    let json: Value = serde_json::from_str(&text).map_err(|e| {
+        println!("解析 GitHub JSON 失败，跳过 SHA256 验证: {}", e);
+        e.to_string()
+    })?;
 
-    let file_name = format!("n8n-core-{}.zip", platform);
-    let assets = match json["assets"].as_array() {
-        Some(a) => a,
-        None => {
-            println!("GitHub 响应中缺少 assets 字段，跳过 SHA256 验证");
-            return Ok(None); // 跳过验证，直接下载
-        }
-    };
+    // 查找对应的资产
+    let assets = json["assets"].as_array().ok_or_else(|| {
+        println!("GitHub 响应中缺少 assets 字段，跳过 SHA256 验证");
+        "缺少 assets 字段".to_string()
+    })?;
 
     for asset in assets {
         if asset["name"].as_str() == Some(&file_name) {
-            let digest = match asset["digest"].as_str() {
-                Some(d) => d,
-                None => {
-                    println!("资产缺少 digest 字段，跳过 SHA256 验证");
-                    return Ok(None); // 跳过验证，直接下载
-                }
-            };
+            let digest = asset["digest"].as_str().ok_or_else(|| {
+                println!("资产缺少 digest 字段，跳过 SHA256 验证");
+                "缺少 digest 字段".to_string()
+            })?;
+
             // digest 格式: "sha256:xxxxxxxx..."
-            if let Some(sha256) = digest.strip_prefix("sha256:") {
-                return Ok(Some(sha256.to_string()));
+            match digest.strip_prefix("sha256:") {
+                Some(sha256) => return Ok(Some(sha256.to_string())),
+                None => {
+                    println!("无效的 digest 格式: {}，跳过 SHA256 验证", digest);
+                    return Ok(None);
+                }
             }
-            println!("无效的 digest 格式: {}，跳过 SHA256 验证", digest);
-            return Ok(None); // 跳过验证，直接下载
         }
     }
 
     println!("未找到 {} 的发布资源，跳过 SHA256 验证", file_name);
-    Ok(None) // 跳过验证，直接下载
+    Ok(None)
 }
 
 // --- Tauri 命令 ---
@@ -239,17 +252,16 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
 
     let app_handle = window.app_handle();
 
-    let platform = if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "macos"
+    let platform = match env::consts::OS {
+        "windows" => "windows",
+        "macos" => "macos",
+        "linux" => "linux",
+        _ => "unknown",
     };
     let file_name = format!("n8n-core-{}.zip", platform);
 
-    // 使用代理下载
-    let proxy_prefix = "https://gh-proxy.com/";
-    let base_url = "https://github.com/tangtao646/n8n-core-builder/releases/latest/download";
-    let url = format!("{}{}/{}", proxy_prefix, base_url, file_name);
+    // 构建下载 URL
+    let url = format!("{}{}/{}", GH_PROXY_PREFIX, N8N_CORE_BASE_URL, file_name);
 
     let app_data = app_handle
         .path()
@@ -411,19 +423,12 @@ pub async fn proxy_health_check() -> Result<String, String> {
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
-    let endpoints = [
-        "http://localhost:5678/healthz",
-        "http://127.0.0.1:5678/healthz",
-        "http://localhost:5678/",
-        "http://127.0.0.1:5678/",
-    ];
-
     // 重试逻辑：最多重试3次，每次间隔500ms
-    let max_retries = 3;
+    const MAX_RETRIES: usize = 3;
     let mut last_error = None;
 
-    for retry in 0..max_retries {
-        for endpoint in endpoints.iter() {
+    for retry in 0..MAX_RETRIES {
+        for endpoint in HEALTH_CHECK_ENDPOINTS.iter() {
             match client.get(*endpoint).send().await {
                 Ok(response) => {
                     let status = response.status();
@@ -433,7 +438,7 @@ pub async fn proxy_health_check() -> Result<String, String> {
                         // 尝试读取响应体以获取更多信息
                         let body_text = response.text().await.unwrap_or_default();
                         return Ok(format!("healthy - {} - {}", status, body_text));
-                    } else if retry < max_retries - 1
+                    } else if retry < MAX_RETRIES - 1
                         && (status == 502 || status == 503 || status == 504)
                     {
                         // 瞬态错误，记录并继续重试
@@ -441,7 +446,7 @@ pub async fn proxy_health_check() -> Result<String, String> {
                             "健康检查遇到瞬态错误 {}，重试 {}/{}",
                             status,
                             retry + 1,
-                            max_retries
+                            MAX_RETRIES
                         );
                         last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -452,12 +457,12 @@ pub async fn proxy_health_check() -> Result<String, String> {
                 }
                 Err(e) => {
                     // 网络错误也可以重试
-                    if retry < max_retries - 1 {
+                    if retry < MAX_RETRIES - 1 {
                         println!(
                             "健康检查网络错误: {}，重试 {}/{}",
                             e,
                             retry + 1,
-                            max_retries
+                            MAX_RETRIES
                         );
                         last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -470,7 +475,7 @@ pub async fn proxy_health_check() -> Result<String, String> {
         }
 
         // 如果所有端点都失败了，等待一下再重试
-        if retry < max_retries - 1 {
+        if retry < MAX_RETRIES - 1 {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
     }
