@@ -19,7 +19,7 @@ static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 /// 构造 n8n 进程的环境变量映射
 pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
-    use crate::api::tunnel::{TUNNEL_RUNNING, TUNNEL_URL};
+    use crate::api::tunnel::{TUNNEL_RUNNING, TUNNEL_URL, TUNNEL_CONFIG};
     use std::collections::HashMap;
 
     let mut envs = HashMap::new();
@@ -31,15 +31,55 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
     };
 
     if tunnel_enabled {
+        // 检查是否使用自定义域名
+        let (use_custom_domain, custom_domain) = {
+            let config_guard = TUNNEL_CONFIG.lock().unwrap();
+            (config_guard.use_custom_domain, config_guard.custom_domain.clone())
+        };
+
         let tunnel_url = {
             let url_guard = TUNNEL_URL.lock().unwrap();
             url_guard.clone()
         };
-        if let Some(url) = tunnel_url {
-            envs.insert("WEBHOOK_URL".to_string(), url.clone());
-            envs.insert("N8N_EDITOR_BASE_URL".to_string(), url);
-            envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
-        }
+
+        // 固定域名优先级逻辑：如果启用自定义域名且域名不为空，使用自定义域名
+        // 只有在未配置固定域名时，才使用从日志抓取的临时域名
+        let final_url = if use_custom_domain {
+            if let Some(domain) = custom_domain {
+                if !domain.trim().is_empty() {
+                    // 使用固定域名
+                    domain
+                } else {
+                    // 自定义域名启用但为空，回退到隧道 URL
+                    if let Some(url) = tunnel_url {
+                        url
+                    } else {
+                        // 如果没有 URL，不设置环境变量
+                        return envs;
+                    }
+                }
+            } else {
+                // 自定义域名启用但为 None，回退到隧道 URL
+                if let Some(url) = tunnel_url {
+                    url
+                } else {
+                    // 如果没有 URL，不设置环境变量
+                    return envs;
+                }
+            }
+        } else {
+            // 未启用自定义域名，使用隧道 URL
+            if let Some(url) = tunnel_url {
+                url
+            } else {
+                // 如果没有 URL，不设置环境变量
+                return envs;
+            }
+        };
+
+        envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
+        envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
+        envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
     }
 
     // 条件 B: 节点解禁开关 nodes_unlocked

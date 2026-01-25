@@ -64,6 +64,8 @@ pub struct TunnelConfig {
     pub last_url: Option<String>,
     pub auto_start: bool,
     pub created_at: String,
+    pub custom_domain: Option<String>,
+    pub use_custom_domain: bool,
 }
 
 impl Default for TunnelConfig {
@@ -72,6 +74,8 @@ impl Default for TunnelConfig {
             last_url: None,
             auto_start: false,
             created_at: chrono::Local::now().to_rfc3339(),
+            custom_domain: None,
+            use_custom_domain: false,
         }
     }
 }
@@ -107,7 +111,7 @@ pub struct TunnelError {
 // 向后兼容的全局状态（单隧道）
 pub(crate) static TUNNEL_URL: Lazy<Arc<Mutex<Option<String>>>> = Lazy::new(|| Arc::new(Mutex::new(None)));
 pub(crate) static TUNNEL_RUNNING: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(false)));
-static TUNNEL_CONFIG: Lazy<Arc<Mutex<TunnelConfig>>> = Lazy::new(|| Arc::new(Mutex::new(TunnelConfig::default())));
+pub(crate) static TUNNEL_CONFIG: Lazy<Arc<Mutex<TunnelConfig>>> = Lazy::new(|| Arc::new(Mutex::new(TunnelConfig::default())));
 
 // --- 内部辅助函数 ---
 
@@ -178,7 +182,27 @@ fn update_last_url<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), Stri
 }
 
 /// 内部函数：重启 n8n 并注入环境变量
+/// 延迟重启机制：确保只有在真正监听到有效的隧道 URL 时才重启
 fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
+    // 验证 URL 是否有效（必须包含协议和域名）
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        println!("Invalid tunnel URL (missing protocol): {}", url);
+        return;
+    }
+    
+    // 检查隧道是否正在运行
+    let tunnel_running = {
+        let running_guard = TUNNEL_RUNNING.lock().unwrap();
+        *running_guard
+    };
+    
+    if !tunnel_running {
+        println!("Tunnel is not running, skipping n8n restart");
+        return;
+    }
+    
+    println!("[DELAYED RESTART] Valid tunnel URL detected: {}, proceeding with n8n restart", url);
+    
     // 获取应用数据目录
     let app_path = match app.path().app_data_dir() {
         Ok(path) => path,
@@ -213,6 +237,9 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
     // 停止现有的 n8n 进程（杀掉再重启）
     shutdown_n8n();
     
+    // 等待 100ms 确保端口完全释放
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    
     // 构造环境变量映射（包含隧道 URL 和节点解禁状态）
     let mut additional_envs = construct_n8n_envs();
     
@@ -230,13 +257,13 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
     // 启动 n8n 进程
     match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
         Ok(_) => {
-            println!("N8N restarted with tunnel URL: {}", url);
+            println!("[DELAYED RESTART] N8N successfully restarted with tunnel URL: {}", url);
             if let Ok(_manager) = PROCESS_MANAGER.lock() {
                 println!("Tunnel: N8N process started with tunnel URL");
             }
         }
         Err(e) => {
-            println!("Failed to restart n8n: {}", e);
+            println!("[DELAYED RESTART] Failed to restart n8n: {}", e);
         }
     }
 }
@@ -245,7 +272,7 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
 
 /// 启动 Cloudflare Tunnel
 pub async fn start_tunnel<R: Runtime>(
-    app: AppHandle<R>, 
+    app: AppHandle<R>,
     cloudflared_path: String
 ) -> Result<(), String> {
     // 1. 强制清理系统中残留的独立进程 (无论是不是本应用启动的)
@@ -267,13 +294,38 @@ pub async fn start_tunnel<R: Runtime>(
     
     println!("Using cloudflared at: {}", cloudflared_path);
     
-    // 4. 启动 cloudflared 进程 (重点：捕获 stderr，因为 URL 通常输出在错误流)
-    let mut child = Command::new(&cloudflared_path)
-        .args(&["tunnel", "--url", "http://localhost:5678", "--no-autoupdate"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("无法启动 cloudflared: {}", e))?;
+    // 4. 检查配置，决定使用临时模式还是固定模式
+    let (use_custom_domain, custom_domain) = {
+        let config_guard = TUNNEL_CONFIG.lock().unwrap();
+        (config_guard.use_custom_domain, config_guard.custom_domain.clone())
+    };
+    
+    let mut child = if use_custom_domain {
+        // 固定模式：使用自定义域名
+        // 注意：这里需要用户已经配置了 tunnel 并登录 cloudflared
+        // 我们假设用户已经配置了 tunnel，使用 tunnel run 命令
+        // 实际应用中可能需要更复杂的逻辑来处理 credentials 等
+        println!("Starting tunnel in fixed mode with custom domain: {:?}", custom_domain);
+        
+        // 这里需要 tunnel name 或 ID，暂时使用一个占位符
+        // 实际应该从配置中读取或让用户输入
+        let tunnel_name = "n8n-tunnel"; // 默认隧道名称
+        Command::new(&cloudflared_path)
+            .args(&["tunnel", "run", tunnel_name, "--no-autoupdate"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("无法启动 cloudflared (固定模式): {}", e))?
+    } else {
+        // 临时模式：使用随机域名
+        println!("Starting tunnel in temporary mode");
+        Command::new(&cloudflared_path)
+            .args(&["tunnel", "--url", "http://localhost:5678", "--no-autoupdate"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("无法启动 cloudflared: {}", e))?
+    };
     
     {
         let mut running_guard = TUNNEL_RUNNING.lock().unwrap();
@@ -287,7 +339,12 @@ pub async fn start_tunnel<R: Runtime>(
     // 5. 使用线程监控日志输出抓取 URL
     std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
-        let regex = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com").unwrap();
+        // 更新正则表达式以匹配自定义域名和临时域名
+        // 临时域名必须严格以 .trycloudflare.com 结尾，避免匹配 cloudflare.com
+        // 允许 http:// 或 https:// 协议，匹配包含在文本中的 URL
+        let regex_temp = Regex::new(r"https?://[a-z0-9-]+\.trycloudflare\.com").unwrap();
+        // 自定义域名正则表达式，匹配有效的 URL
+        let regex_custom = Regex::new(r"https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap();
         let mut found_url = false;
 
         for line in reader.lines() {
@@ -295,10 +352,36 @@ pub async fn start_tunnel<R: Runtime>(
                 println!("Cloudflared: {}", l);
                 
                 if !found_url {
-                    if let Some(captures) = regex.captures(&l) {
-                        if let Some(url_match) = captures.get(0) {
-                            let url = url_match.as_str().to_string();
-                            println!("Found tunnel URL: {}", url);
+                    // 先尝试匹配临时域名（必须严格以 .trycloudflare.com 结尾）
+                    // 使用 find 而不是 captures，因为 URL 可能被其他字符包围
+                    if let Some(url_match) = regex_temp.find(&l) {
+                        let url = url_match.as_str().to_string();
+                        // 额外验证：确保 URL 确实以 .trycloudflare.com 结尾，并且不包含 cloudflare.com
+                        if url.ends_with(".trycloudflare.com") && !url.contains("cloudflare.com") {
+                            println!("Found temporary tunnel URL: {}", url);
+                            found_url = true;
+                            
+                            // 更新状态
+                            {
+                                let mut url_guard = TUNNEL_URL.lock().unwrap();
+                                *url_guard = Some(url.clone());
+                            }
+                            
+                            let _ = update_last_url(&app_clone, &url);
+                            let _ = app_clone.emit("tunnel-update", TunnelEvent::with_url("Online", url.clone()));
+                            
+                            // 注入环境变量并重启 n8n
+                            restart_n8n_with_env(&app_clone, &url);
+                        }
+                    }
+                    // 如果没有找到临时域名，尝试匹配自定义域名
+                    else if let Some(url_match) = regex_custom.find(&l) {
+                        let url = url_match.as_str().to_string();
+                        // 检查是否是有效的 URL（包含协议）并且不是 cloudflare.com 相关域名
+                        if (url.starts_with("http://") || url.starts_with("https://"))
+                            && !url.contains("cloudflare.com")
+                            && !url.ends_with(".trycloudflare.com") {
+                            println!("Found custom domain URL: {}", url);
                             found_url = true;
                             
                             // 更新状态
@@ -421,11 +504,15 @@ pub async fn update_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
     auto_start: Option<bool>,
     last_url: Option<String>,
+    custom_domain: Option<String>,
+    use_custom_domain: Option<bool>,
 ) -> Result<(), String> {
     {
         let mut config_guard = TUNNEL_CONFIG.lock().unwrap();
         if let Some(v) = auto_start { config_guard.auto_start = v; }
         if let Some(v) = last_url { config_guard.last_url = Some(v); }
+        if let Some(v) = custom_domain { config_guard.custom_domain = Some(v); }
+        if let Some(v) = use_custom_domain { config_guard.use_custom_domain = v; }
         config_guard.created_at = chrono::Local::now().to_rfc3339();
     }
     save_tunnel_config(&app)
@@ -475,6 +562,83 @@ pub async fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
         Ok(())
     } else {
         Err("Tunnel does not need recovery".to_string())
+    }
+}
+
+/// 应用自定义域名配置并重启 n8n
+pub async fn apply_custom_domain_config<R: Runtime>(
+    app: AppHandle<R>,
+    custom_domain: Option<String>,
+    use_custom_domain: bool,
+) -> Result<(), String> {
+    // 1. 更新全局配置状态
+    {
+        let mut config_guard = TUNNEL_CONFIG.lock().unwrap();
+        config_guard.custom_domain = custom_domain;
+        config_guard.use_custom_domain = use_custom_domain;
+        config_guard.created_at = chrono::Local::now().to_rfc3339();
+    }
+    
+    // 保存配置到文件
+    save_tunnel_config(&app)?;
+    
+    // 2. 检查 n8n 是否正在运行
+    let is_running = {
+        let manager = PROCESS_MANAGER.lock().unwrap();
+        manager.has_child()
+    };
+    
+    if !is_running {
+        println!("N8N is not running, configuration saved but no restart needed");
+        return Ok(());
+    }
+    
+    // 3. 获取当前隧道 URL（如果有）
+    let current_url = {
+        let url_guard = TUNNEL_URL.lock().unwrap();
+        url_guard.clone()
+    };
+    
+    // 4. 杀掉当前 n8n 进程
+    println!("Killing current n8n process to apply domain configuration...");
+    shutdown_n8n();
+    
+    // 5. 等待 500ms 确保端口释放
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    
+    // 6. 获取应用路径和二进制
+    let app_path = app.path().app_data_dir().map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    
+    let n8n_bin = app_path.join("n8n-core/node_modules/n8n/bin/n8n");
+    if !n8n_bin.exists() {
+        return Err("N8N binary not found".to_string());
+    }
+    
+    let runtime_dir = app_path.join("runtime");
+    let node_path = manager::get_node_binary_path(runtime_dir);
+    if !node_path.exists() {
+        return Err("Node binary not found".to_string());
+    }
+    
+    let data_dir = app_path.join("n8n-data");
+    if !data_dir.exists() {
+        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    }
+    
+    // 7. 构造新的环境变量（包含新的域名配置）
+    let additional_envs = construct_n8n_envs();
+    println!("New environment variables with domain config: {:?}", additional_envs);
+    
+    // 8. 重新启动 n8n
+    match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
+        Ok(_) => {
+            println!("N8N restarted with updated domain configuration");
+            Ok(())
+        }
+        Err(e) => {
+            println!("Failed to restart n8n: {}", e);
+            Err(e)
+        }
     }
 }
 

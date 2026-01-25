@@ -28,6 +28,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [nodeUnblockEnabled, setNodeUnblockEnabled] = useState(false);
   const [isNodeUnblockLoading, setIsNodeUnblockLoading] = useState(false);
+  const [customDomain, setCustomDomain] = useState<string>("");
+  const [useCustomDomain, setUseCustomDomain] = useState(false);
+  const [isDomainConfigLoading, setIsDomainConfigLoading] = useState(false);
 
   // 加载应用信息
   const loadAppInfo = async () => {
@@ -39,6 +42,19 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       // 获取应用版本（这里可以调用后端命令获取）
       // 暂时使用固定值
       setAppVersion("1.0.2");
+
+      // 加载隧道配置（包含自定义域名设置）
+      try {
+        const config = await invoke<any>("get_tunnel_config");
+        if (config.custom_domain) {
+          setCustomDomain(config.custom_domain);
+        }
+        if (config.use_custom_domain !== undefined) {
+          setUseCustomDomain(config.use_custom_domain);
+        }
+      } catch (err) {
+        console.error("Failed to load tunnel config:", err);
+      }
     } catch (err) {
       console.error("Failed to load app info:", err);
     }
@@ -138,6 +154,40 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     } catch (err: any) {
       console.error("Failed to stop tunnel:", err);
       setIsTunnelLoading(false);
+    }
+  };
+
+  // 保存自定义域名配置
+  const saveCustomDomainConfig = async () => {
+    if (isDomainConfigLoading) return;
+
+    setIsDomainConfigLoading(true);
+    try {
+      // 验证域名格式
+      const domainToSave = customDomain.trim();
+      if (useCustomDomain && domainToSave && !domainToSave.includes("://")) {
+        alert("请输入完整的域名（包含 http:// 或 https://）");
+        setIsDomainConfigLoading(false);
+        return;
+      }
+
+      console.log("Saving custom domain config:", {
+        customDomain: domainToSave || null,
+        useCustomDomain
+      });
+
+      // 调用后端命令应用配置
+      await invoke("apply_custom_domain_config", {
+        customDomain: domainToSave || null,
+        useCustomDomain
+      });
+
+      alert("域名配置已保存并应用");
+    } catch (err: any) {
+      console.error("Failed to save custom domain config:", err);
+      alert(`保存域名配置失败: ${err.message || err}`);
+    } finally {
+      setIsDomainConfigLoading(false);
     }
   };
 
@@ -409,7 +459,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
             </div>
           </div>
 
-          {/* 隧道控制 */}
+          {/* Cloudflare 隧道与自定义域名配置（合并为一个卡片） */}
           <div className="service-card">
             <div className="service-header">
               <div className="service-info">
@@ -465,8 +515,73 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                 </span>
               </div>
             )}
-          </div>
 
+            {/* 自定义域名配置部分 */}
+            <div className="custom-domain-section mt-4 pt-4 border-t border-gray-200">
+              <div className="service-header">
+                <div className="service-info">
+                  <h4 className="service-name text-sm">自定义域名</h4>
+                  <span className="service-status text-blue-600 text-sm">
+                    {useCustomDomain ? "已启用" : "已禁用"}
+                  </span>
+                </div>
+                <div className="service-switch">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={useCustomDomain}
+                      onChange={(e) => {
+                        setUseCustomDomain(e.target.checked);
+                      }}
+                      disabled={isDomainConfigLoading}
+                    />
+                    <span className="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              {useCustomDomain && (
+                <div className="mt-3">
+                  <div className="mb-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      自定义域名
+                    </label>
+                    <input
+                      type="text"
+                      value={customDomain}
+                      onChange={(e) => setCustomDomain(e.target.value)}
+                      placeholder="https://your-domain.com"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isDomainConfigLoading}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      请输入完整的域名，包含 http:// 或 https://
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <button
+                  onClick={saveCustomDomainConfig}
+                  disabled={isDomainConfigLoading || (useCustomDomain && !customDomain.trim())}
+                  className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isDomainConfigLoading ? (
+                    <>
+                      <svg className="spinner inline mr-2" width="16" height="16" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      </svg>
+                      保存域名配置
+                    </>
+                  ) : "保存域名配置"}
+                </button>
+                <p className="text-xs text-gray-500 mt-2">
+                  保存后会自动重启 n8n 以应用新的域名配置
+                </p>
+              </div>
+            </div>
+          </div>
 
         </div>
 

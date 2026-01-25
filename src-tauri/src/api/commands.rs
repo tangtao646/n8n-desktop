@@ -89,8 +89,10 @@ pub async fn update_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
     auto_start: Option<bool>,
     last_url: Option<String>,
+    custom_domain: Option<String>,
+    use_custom_domain: Option<bool>,
 ) -> Result<(), String> {
-    tunnel::update_tunnel_config(app, auto_start, last_url).await
+    tunnel::update_tunnel_config(app, auto_start, last_url, custom_domain, use_custom_domain).await
 }
 
 /// 向后兼容的包装函数 - 应用启动时加载配置
@@ -133,6 +135,16 @@ pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
 #[tauri::command]
 pub async fn get_nodes_unlocked() -> Result<bool, String> {
     n8n_core::get_nodes_unlocked().await
+}
+
+/// 应用自定义域名配置并重启 n8n
+#[tauri::command]
+pub async fn apply_custom_domain_config<R: Runtime>(
+    app: AppHandle<R>,
+    custom_domain: Option<String>,
+    use_custom_domain: bool,
+) -> Result<(), String> {
+    tunnel::apply_custom_domain_config(app, custom_domain, use_custom_domain).await
 }
 
 /// 切换侧边栏状态
