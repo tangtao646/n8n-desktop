@@ -1,15 +1,22 @@
 use tauri::{AppHandle, Manager, Runtime, Window};
 use std::process::Command;
+use std::fs::File;
+use std::io::{self, copy};
+use std::path::{Path, PathBuf};
 use regex::Regex;
-use which;
 use serde::{Serialize, Deserialize};
 use chrono;
+use flate2::read::GzDecoder;
+use tar::Archive;
 
 use crate::services::downloader;
 
+// --- 公共常量提取 ---
+const CLOUDFLARED_BASE_URL: &str = "https://github.com/cloudflare/cloudflared/releases/latest/download";
+const GH_PROXY_PREFIX: &str = "https://gh-proxy.com/";
+
 // --- 数据结构定义 ---
 
-/// Cloudflared 缓存信息
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CloudflaredCacheInfo {
     pub filename: String,
@@ -18,7 +25,6 @@ pub struct CloudflaredCacheInfo {
     pub version: String,
 }
 
-/// Cloudflared 版本信息
 #[derive(Clone, Serialize)]
 pub struct CloudflaredVersionInfo {
     pub installed: bool,
@@ -30,7 +36,6 @@ pub struct CloudflaredVersionInfo {
 
 // --- 内部辅助函数 ---
 
-/// 获取平台字符串
 fn get_platform_string() -> String {
     if cfg!(target_os = "windows") {
         "windows".to_string()
@@ -43,254 +48,201 @@ fn get_platform_string() -> String {
     }
 }
 
-/// 获取 cloudflared 二进制路径
-/// 优先尝试从应用资源中加载，如果找不到则使用系统 PATH
+/// 【核心改进】精准解压函数：
+/// 遍历 tgz，只提取名为 "cloudflared" 的二进制文件，忽略任何内部文件夹结构
+fn extract_bin_from_tgz(archive_path: &Path, dest_path: &Path) -> Result<(), String> {
+    let tar_gz = File::open(archive_path).map_err(|e| format!("无法打开压缩包: {}", e))?;
+    let tar = GzDecoder::new(tar_gz);
+    let mut archive = Archive::new(tar);
+    
+    for entry in archive.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path().map_err(|e| e.to_string())?;
+
+        // 无论压缩包内是否有文件夹包裹（如 ./bin/cloudflared），只匹配文件名
+        if path.file_name().and_then(|s| s.to_str()) == Some("cloudflared") {
+            let mut out_file = File::create(dest_path).map_err(|e| e.to_string())?;
+            copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err("压缩包内未找到 cloudflared 二进制文件".to_string())
+}
+
 pub fn get_cloudflared_path<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
-    // 首先尝试从应用资源中查找
     let resource_path = app.path()
         .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
+        .map_err(|e| format!("获取资源目录失败: {}", e))?
         .join("cloudflared");
-    
+
     if resource_path.exists() {
-        return Ok(resource_path.to_string_lossy().to_string());
+        if resource_path.is_file() {
+            return Ok(resource_path.to_string_lossy().to_string());
+        } else if resource_path.is_dir() {
+            let exe_name = if cfg!(target_os = "windows") { "cloudflared.exe" } else { "cloudflared" };
+            let exe_path = resource_path.join(exe_name);
+            if exe_path.exists() {
+                return Ok(exe_path.to_string_lossy().to_string());
+            }
+        }
     }
-    
-    // 如果资源中不存在，尝试系统 PATH
+
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let download_dir = app_data_dir.join("cloudflared");
+    let cache_info_path = download_dir.join("cache_info.json");
+
+    if download_dir.exists() && cache_info_path.exists() {
+        if let Ok(cache_info_json) = std::fs::read_to_string(&cache_info_path) {
+            if let Ok(cache_info) = serde_json::from_str::<CloudflaredCacheInfo>(&cache_info_json) {
+                let candidate_path = download_dir.join(&cache_info.filename);
+                if candidate_path.exists() {
+                    return Ok(candidate_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
     match which::which("cloudflared") {
         Ok(path) => Ok(path.to_string_lossy().to_string()),
-        Err(_) => Err("cloudflared not found in PATH and not bundled with application".to_string()),
+        Err(_) => Err("未找到 cloudflared".to_string()),
     }
 }
 
-/// 获取 cloudflared 二进制路径（支持自动下载）
-/// 如果本地不存在，会自动下载对应平台的 cloudflared
 pub async fn get_or_download_cloudflared<R: Runtime>(
     app: &AppHandle<R>, 
     window: Option<Window<R>>
 ) -> Result<String, String> {
-    // 首先尝试从应用资源中查找
-    let resource_path = app.path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join("cloudflared");
-    
-    if resource_path.exists() {
-        return Ok(resource_path.to_string_lossy().to_string());
+    if let Ok(path) = get_cloudflared_path(app) {
+        return Ok(path);
     }
-    
-    // 如果资源中不存在，尝试系统 PATH
-    match which::which("cloudflared") {
-        Ok(path) => return Ok(path.to_string_lossy().to_string()),
-        Err(_) => {
-            // 系统PATH中也没有，需要自动下载
-            println!("cloudflared not found, starting automatic download...");
-        }
-    }
-    
-    // 如果没有提供窗口，无法显示下载进度
-    let window = match window {
-        Some(w) => w,
-        None => return Err("Window handle required for downloading cloudflared".to_string()),
-    };
-    
-    // 检查缓存中是否有可用的cloudflared
-    let app_data_dir = app.path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
+
+    let window = window.ok_or("下载 cloudflared 需要窗口句柄".to_string())?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let download_dir = app_data_dir.join("cloudflared");
-    let cache_info_path = download_dir.join("cache_info.json");
     
-    // 读取缓存信息
-    let mut need_download = true;
-    let mut cached_path = None;
-    
-    if download_dir.exists() && cache_info_path.exists() {
-        if let Ok(cache_info_json) = std::fs::read_to_string(&cache_info_path) {
-            if let Ok(cache_info) = serde_json::from_str::<CloudflaredCacheInfo>(&cache_info_json) {
-                // 检查缓存是否过期（30天）
-                let cache_age = chrono::Utc::now().signed_duration_since(
-                    chrono::DateTime::parse_from_rfc3339(&cache_info.downloaded_at)
-                        .unwrap_or_else(|_| chrono::Utc::now().into())
-                );
-                
-                if cache_age.num_days() < 30 {
-                    // 缓存有效，检查文件是否存在
-                    let candidate_path = download_dir.join(&cache_info.filename);
-                    if candidate_path.exists() {
-                        println!("Using cached cloudflared from: {:?}", candidate_path);
-                        cached_path = Some(candidate_path);
-                        need_download = false;
-                    }
-                }
-            }
-        }
-    }
-    
-    if !need_download {
-        return Ok(cached_path.unwrap().to_string_lossy().to_string());
-    }
-    
-    // 根据平台确定下载URL
-    let (url, dest_filename) = if cfg!(target_os = "windows") {
-        (
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe".to_string(),
-            "cloudflared.exe".to_string()
-        )
-    } else if cfg!(target_os = "macos") {
-        (
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz".to_string(),
-            "cloudflared".to_string()
-        )
-    } else if cfg!(target_os = "linux") {
-        (
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64".to_string(),
-            "cloudflared".to_string()
-        )
-    } else {
-        return Err("Unsupported platform for cloudflared download".to_string());
-    };
-    
-    // 使用代理下载（提高成功率）
-    let proxy_prefix = "https://gh-proxy.com/";
-    let proxy_url = format!("{}{}", proxy_prefix, url);
-    
-    // 确保下载目录存在
     if !download_dir.exists() {
-        std::fs::create_dir_all(&download_dir)
-            .map_err(|e| format!("Failed to create download directory: {}", e))?;
+        std::fs::create_dir_all(&download_dir).map_err(|e| e.to_string())?;
     }
+
+    // --- 识别架构与平台 ---
+    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" };
     
-    let dest_path = download_dir.join(&dest_filename);
+    let (remote_filename, is_archive) = if cfg!(target_os = "windows") {
+        ("cloudflared-windows-amd64.exe".to_string(), false)
+    } else if cfg!(target_os = "macos") {
+        // macOS 需要根据架构选 tgz
+        (format!("cloudflared-darwin-{}.tgz", arch), true)
+    } else if cfg!(target_os = "linux") {
+        // Linux GitHub Release 是裸奔的二进制，没有 .exe 也没有 .tgz
+        (format!("cloudflared-linux-{}", arch), false)
+    } else {
+        return Err("暂不支持此操作系统平台".to_string());
+    };
+
+    let download_url = format!("{}/{}", CLOUDFLARED_BASE_URL, remote_filename);
+    let proxy_url = format!("{}{}", GH_PROXY_PREFIX, download_url);
+
+    // 统一定义最终二进制文件名
+    let final_bin_name = if cfg!(target_os = "windows") { "cloudflared.exe" } else { "cloudflared" };
+    let final_bin_path = download_dir.join(final_bin_name);
     
-    println!("Downloading cloudflared from: {}", proxy_url);
-    println!("Destination: {:?}", dest_path);
-    
-    // 下载文件
-    downloader::download_file(window.clone(), proxy_url, dest_path.clone(), "cloudflared".to_string()).await?;
-    
-    // 设置执行权限（Unix系统）
+    // 定义下载时的临时路径
+    let temp_download_path = download_dir.join(if is_archive { "cloudflared_temp.tgz" } else { "cloudflared.tmp" });
+
+    // --- 执行下载 ---
+    downloader::download_file(
+        window.clone(), 
+        proxy_url, 
+        temp_download_path.clone(), 
+        "cloudflared".to_string()
+    ).await?;
+
+    // --- 处理解压或移动 ---
+    if is_archive {
+        // 如果是 macOS 的 tgz，执行精准解压
+        extract_bin_from_tgz(&temp_download_path, &final_bin_path)?;
+        let _ = std::fs::remove_file(&temp_download_path); 
+    } else {
+        // 如果是 Windows 或 Linux 的裸二进制文件，直接覆盖移动
+        if final_bin_path.exists() {
+            std::fs::remove_file(&final_bin_path).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&temp_download_path, &final_bin_path).map_err(|e| e.to_string())?;
+    }
+
+    // --- 设置权限与 macOS 隔离位清理 ---
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&dest_path)
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?
-            .permissions();
-        perms.set_mode(0o755); // rwxr-xr-x
-        std::fs::set_permissions(&dest_path, perms)
-            .map_err(|e| format!("Failed to set executable permissions: {}", e))?;
+        std::fs::set_permissions(
+            &final_bin_path, 
+            std::fs::Permissions::from_mode(0o755)
+        ).map_err(|e| format!("设置权限失败: {}", e))?;
+
+        #[cfg(target_os = "macos")]
+        {
+            // 清除 macOS 的“隔离属性”，防止用户运行报错“无法验证开发者”
+            let _ = Command::new("xattr")
+                .arg("-d")
+                .arg("com.apple.quarantine")
+                .arg(&final_bin_path)
+                .output();
+        }
     }
-    
-    // 保存缓存信息
+
+    // --- 写入缓存元数据 ---
     let cache_info = CloudflaredCacheInfo {
-        filename: dest_filename.clone(),
+        filename: final_bin_name.to_string(),
         downloaded_at: chrono::Utc::now().to_rfc3339(),
         platform: get_platform_string(),
-        version: "latest".to_string(), // 可以尝试获取实际版本
+        version: "latest".to_string(),
     };
     
-    let cache_info_json = serde_json::to_string_pretty(&cache_info)
-        .map_err(|e| format!("Failed to serialize cache info: {}", e))?;
-    
-    std::fs::write(&cache_info_path, cache_info_json)
-        .map_err(|e| format!("Failed to write cache info: {}", e))?;
-    
-    println!("cloudflared downloaded successfully to: {:?}", dest_path);
-    
-    Ok(dest_path.to_string_lossy().to_string())
+    let info_json = serde_json::to_string(&cache_info).map_err(|e| e.to_string())?;
+    std::fs::write(download_dir.join("cache_info.json"), info_json).map_err(|e| e.to_string())?;
+
+    Ok(final_bin_path.to_string_lossy().to_string())
 }
 
-// --- Tauri 命令 ---
+// --- Tauri 指令 ---
 
-/// 检查 cloudflared 版本
 pub async fn check_cloudflared_version<R: Runtime>(app: AppHandle<R>) -> Result<CloudflaredVersionInfo, String> {
     let path = match get_cloudflared_path(&app) {
-        Ok(path) => path,
-        Err(_) => {
-            return Ok(CloudflaredVersionInfo {
-                installed: false,
-                version: None,
-                path: None,
-                cached: false,
-                cache_age_days: None,
-            });
-        }
+        Ok(p) => p,
+        Err(_) => return Ok(CloudflaredVersionInfo { 
+            installed: false, version: None, path: None, cached: false, cache_age_days: None 
+        }),
     };
+
+    let output = Command::new(&path).arg("--version").output().map_err(|e| e.to_string())?;
+    let version_string = String::from_utf8_lossy(&output.stdout);
     
-    // 尝试运行 cloudflared --version 获取版本
-    let version_output = Command::new(&path)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("Failed to get cloudflared version: {}", e))?;
-    
-    let version_string = String::from_utf8_lossy(&version_output.stdout).to_string();
-    
-    // 解析版本号（简化版本）
-    let version = if version_string.contains("cloudflared") {
-        // 尝试提取版本号，例如 "cloudflared version 2024.1.1 (built 2024-01-01)"
-        let re = Regex::new(r"cloudflared version (\d+\.\d+\.\d+)").unwrap();
-        re.captures(&version_string)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
-    } else {
-        None
-    };
-    
-    // 检查是否有缓存
-    let app_data_dir = app.path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
-    let cache_info_path = app_data_dir.join("cloudflared/cache_info.json");
-    let mut cached = false;
-    let mut cache_age_days = None;
-    
-    if cache_info_path.exists() {
-        if let Ok(cache_info_json) = std::fs::read_to_string(&cache_info_path) {
-            if let Ok(cache_info) = serde_json::from_str::<CloudflaredCacheInfo>(&cache_info_json) {
-                cached = true;
-                
-                // 计算缓存年龄
-                if let Ok(cache_time) = chrono::DateTime::parse_from_rfc3339(&cache_info.downloaded_at) {
-                    let cache_age = chrono::Utc::now().signed_duration_since(cache_time);
-                    cache_age_days = Some(cache_age.num_days());
-                }
+    let re = Regex::new(r"version (\d+\.\d+\.\d+)").unwrap();
+    let version = re.captures(&version_string)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string());
+
+    let app_data_dir = app.path().app_data_dir().unwrap();
+    let cache_path = app_data_dir.join("cloudflared/cache_info.json");
+    let mut cache_age = None;
+
+    if let Ok(info_str) = std::fs::read_to_string(&cache_path) {
+        if let Ok(info) = serde_json::from_str::<CloudflaredCacheInfo>(&info_str) {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&info.downloaded_at) {
+                cache_age = Some(chrono::Utc::now().signed_duration_since(dt).num_days());
             }
         }
     }
-    
+
     Ok(CloudflaredVersionInfo {
         installed: true,
         version,
         path: Some(path),
-        cached,
-        cache_age_days,
+        cached: cache_path.exists(),
+        cache_age_days: cache_age,
     })
 }
 
-/// 下载 cloudflared 二进制文件
 pub async fn download_cloudflared<R: Runtime>(app: AppHandle<R>, window: Window<R>) -> Result<(), String> {
-    // 使用 get_or_download_cloudflared 函数，它会自动处理下载
-    match get_or_download_cloudflared(&app, Some(window)).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to download cloudflared: {}", e)),
-    }
-}
-
-/// 清理 cloudflared 缓存
-pub async fn clear_cloudflared_cache<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let app_data_dir = app.path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    
-    let download_dir = app_data_dir.join("cloudflared");
-    
-    if download_dir.exists() {
-        std::fs::remove_dir_all(&download_dir)
-            .map_err(|e| format!("Failed to remove cache directory: {}", e))?;
-        println!("Cloudflared cache cleared");
-    }
-    
-    Ok(())
+    get_or_download_cloudflared(&app, Some(window)).await.map(|_| ())
 }

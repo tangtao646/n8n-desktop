@@ -1,31 +1,86 @@
-use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
+use crate::services::manager::PROCESS_MANAGER;
+use crate::services::{downloader, manager};
+use once_cell::sync::Lazy;
+use reqwest;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use sha2::{Sha256, Digest};
-use serde_json::Value;
-use reqwest;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
 
-use crate::services::{downloader, manager};
-use crate::services::manager::PROCESS_MANAGER;
+// --- 全局状态 ---
+
+/// 节点解禁状态
+static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // --- 内部辅助函数 ---
+
+/// 构造 n8n 进程的环境变量映射
+pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
+    use crate::api::tunnel::{TUNNEL_RUNNING, TUNNEL_URL};
+    use std::collections::HashMap;
+
+    let mut envs = HashMap::new();
+
+    // 条件 A: 隧道开关 tunnel_enabled
+    let tunnel_enabled = {
+        let running_guard = TUNNEL_RUNNING.lock().unwrap();
+        *running_guard
+    };
+
+    if tunnel_enabled {
+        let tunnel_url = {
+            let url_guard = TUNNEL_URL.lock().unwrap();
+            url_guard.clone()
+        };
+        if let Some(url) = tunnel_url {
+            envs.insert("WEBHOOK_URL".to_string(), url.clone());
+            envs.insert("N8N_EDITOR_BASE_URL".to_string(), url);
+            envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
+        }
+    }
+
+    // 条件 B: 节点解禁开关 nodes_unlocked
+    let nodes_unlocked = {
+        let unlocked_guard = NODES_UNLOCKED.lock().unwrap();
+        *unlocked_guard
+    };
+
+    if nodes_unlocked {
+        // 启用节点解禁：设置空列表
+        envs.insert("NODES_EXCLUDE".to_string(), "[]".to_string());
+        envs.insert("N8N_BLOCK_NODES".to_string(), "".to_string());
+    } else {
+        // 禁用节点解禁：设置预设的禁用列表
+        // 这里可以配置需要禁用的节点列表，例如某些高风险节点
+        // 示例：禁用 "n8n-nodes-base.executeCommand"
+        envs.insert("NODES_EXCLUDE".to_string(), r#"["n8n-nodes-base.executeCommand"]"#.to_string());
+        envs.insert("N8N_BLOCK_NODES".to_string(), "executeCommand".to_string());
+    }
+
+    envs
+}
 
 /// 计算文件的 SHA256 哈希值
 pub fn calculate_file_sha256(file_path: &Path) -> Result<String, String> {
     use std::io::Read;
-    
+
     let mut file = fs::File::open(file_path).map_err(|e| format!("无法打开文件: {}", e))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0; 8192];
-    
+
     loop {
-        let bytes_read = file.read(&mut buffer).map_err(|e| format!("读取文件失败: {}", e))?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("读取文件失败: {}", e))?;
         if bytes_read == 0 {
             break;
         }
         hasher.update(&buffer[..bytes_read]);
     }
-    
+
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -34,7 +89,7 @@ pub fn calculate_file_sha256(file_path: &Path) -> Result<String, String> {
 pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, String> {
     let client = reqwest::Client::new();
     let api_url = "https://api.github.com/repos/tangtao646/n8n-core-builder/releases/latest";
-    
+
     let response = match client
         .get(api_url)
         .header("User-Agent", "n8n-desktop")
@@ -48,12 +103,15 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
             return Ok(None); // 跳过验证，直接下载
         }
     };
-    
+
     if !response.status().is_success() {
-        println!("GitHub API 返回错误 {}，跳过 SHA256 验证", response.status());
+        println!(
+            "GitHub API 返回错误 {}，跳过 SHA256 验证",
+            response.status()
+        );
         return Ok(None); // 跳过验证，直接下载
     }
-    
+
     let text = match response.text().await {
         Ok(t) => t,
         Err(e) => {
@@ -61,7 +119,7 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
             return Ok(None); // 跳过验证，直接下载
         }
     };
-    
+
     let json: Value = match serde_json::from_str(&text) {
         Ok(j) => j,
         Err(e) => {
@@ -69,7 +127,7 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
             return Ok(None); // 跳过验证，直接下载
         }
     };
-    
+
     let file_name = format!("n8n-core-{}.zip", platform);
     let assets = match json["assets"].as_array() {
         Some(a) => a,
@@ -78,7 +136,7 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
             return Ok(None); // 跳过验证，直接下载
         }
     };
-    
+
     for asset in assets {
         if asset["name"].as_str() == Some(&file_name) {
             let digest = match asset["digest"].as_str() {
@@ -96,7 +154,7 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
             return Ok(None); // 跳过验证，直接下载
         }
     }
-    
+
     println!("未找到 {} 的发布资源，跳过 SHA256 验证", file_name);
     Ok(None) // 跳过验证，直接下载
 }
@@ -105,7 +163,8 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
 
 /// 检查 n8n 是否已经安装在 AppData 目录
 pub async fn is_installed<R: Runtime>(app: AppHandle<R>) -> bool {
-    app.path().app_data_dir()
+    app.path()
+        .app_data_dir()
         .map(|p| {
             // 注意：解压后路径通常是 n8n-core/node_modules/n8n/bin/n8n
             let bin_path = p.join("n8n-core/node_modules/n8n/bin/n8n");
@@ -117,7 +176,9 @@ pub async fn is_installed<R: Runtime>(app: AppHandle<R>) -> bool {
 /// 全自动设置 Node 运行环境 (Runtime)
 pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> Result<(), String> {
     let app_handle = window.app_handle();
-    let runtime_dir = app_handle.path().app_data_dir()
+    let runtime_dir = app_handle
+        .path()
+        .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("runtime");
 
@@ -127,7 +188,7 @@ pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> Result<(), String> 
     }
 
     let url = manager::get_node_url()?;
-    
+
     // 下载逻辑内部应处理好解压
     downloader::download_file(window, url, runtime_dir, "runtime".to_string()).await
 }
@@ -135,19 +196,26 @@ pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> Result<(), String> 
 /// 安装 n8n 核心包 (下载 + 解压，带 SHA256 验证)
 pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<(), String> {
     use std::io;
-    
+
     let app_handle = window.app_handle();
-    
-    let platform = if cfg!(target_os = "windows") { "windows" } else { "macos" };
+
+    let platform = if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "macos"
+    };
     let file_name = format!("n8n-core-{}.zip", platform);
-    
+
     // 使用代理下载
     let proxy_prefix = "https://gh-proxy.com/";
     let base_url = "https://github.com/tangtao646/n8n-core-builder/releases/latest/download";
     let url = format!("{}{}/{}", proxy_prefix, base_url, file_name);
 
-    let app_data = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
-    let zip_dest = app_data.join(&file_name);  // 使用原始文件名，而不是临时文件名
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let zip_dest = app_data.join(&file_name); // 使用原始文件名，而不是临时文件名
     let final_dir = app_data.join("n8n-core");
 
     println!("开始处理 n8n 资源包: {}", file_name);
@@ -155,11 +223,11 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
     // 1. 获取远程 SHA256 哈希值
     println!("正在获取远程 SHA256 哈希值...");
     let remote_sha256_opt = fetch_latest_sha256(platform).await?;
-    
+
     let need_download = match remote_sha256_opt {
         Some(remote_sha256) => {
             println!("成功获取远程 SHA256: {}", remote_sha256);
-            
+
             // 2. 检查本地文件是否存在且哈希匹配
             if zip_dest.exists() {
                 println!("本地文件已存在，正在验证完整性...");
@@ -169,9 +237,13 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
                             println!("文件完整性验证通过，跳过下载");
                             false
                         } else {
-                            println!("文件哈希不匹配 (本地: {}, 远程: {})，需要重新下载", local_sha256, remote_sha256);
+                            println!(
+                                "文件哈希不匹配 (本地: {}, 远程: {})，需要重新下载",
+                                local_sha256, remote_sha256
+                            );
                             // 删除损坏的文件
-                            fs::remove_file(&zip_dest).map_err(|e| format!("删除损坏文件失败: {}", e))?;
+                            fs::remove_file(&zip_dest)
+                                .map_err(|e| format!("删除损坏文件失败: {}", e))?;
                             true
                         }
                     }
@@ -201,7 +273,13 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
     // 3. 如果需要下载，则下载文件
     if need_download {
         println!("开始下载资源包: {}", url);
-        downloader::download_file(window.clone(), url, zip_dest.clone(), "n8n-core".to_string()).await?;
+        downloader::download_file(
+            window.clone(),
+            url,
+            zip_dest.clone(),
+            "n8n-core".to_string(),
+        )
+        .await?;
         println!("下载完成");
     }
 
@@ -213,17 +291,20 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
 
     // 5. 解压到最终目录
     println!("开始解压到: {:?}", final_dir);
-    
+
     // 发送解压开始事件
-    let _ = window.emit("extraction-start", crate::services::downloader::ExtractionStart {
-        download_type: "n8n-core".to_string(),
-    });
-    
+    let _ = window.emit(
+        "extraction-start",
+        crate::services::downloader::ExtractionStart {
+            download_type: "n8n-core".to_string(),
+        },
+    );
+
     // 内部函数：解压 ZIP 文件
     fn extract_zip_file(archive_path: &Path, target_dir: &Path) -> Result<(), String> {
         use std::io;
         use zip::ZipArchive;
-        
+
         let file = fs::File::open(archive_path).map_err(|e| e.to_string())?;
         let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
 
@@ -248,7 +329,7 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
         }
         Ok(())
     }
-    
+
     extract_zip_file(&zip_dest, &final_dir)?;
     println!("解压完成");
 
@@ -260,9 +341,8 @@ pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()
 
 /// 启动本地 n8n 进程
 pub async fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let app_path = app.path().app_data_dir()
-        .map_err(|e| e.to_string())?;
-    
+    let app_path = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
     let runtime_dir = app_path.join("runtime");
     let node_path = manager::get_node_binary_path(runtime_dir);
 
@@ -280,41 +360,49 @@ pub async fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
         fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     }
 
-    manager::start_node(node_path, n8n_bin, data_dir)
+    // 1. 创建环境变量容器
+    let additional_envs = construct_n8n_envs();
+    manager::start_node(node_path, n8n_bin, data_dir, additional_envs)
 }
 
 pub async fn proxy_health_check() -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))  // 增加超时时间到5秒
+        .timeout(std::time::Duration::from_secs(5)) // 增加超时时间到5秒
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-    
+
     let endpoints = [
         "http://localhost:5678/healthz",
         "http://127.0.0.1:5678/healthz",
         "http://localhost:5678/",
         "http://127.0.0.1:5678/",
     ];
-    
+
     // 重试逻辑：最多重试3次，每次间隔500ms
     let max_retries = 3;
     let mut last_error = None;
-    
+
     for retry in 0..max_retries {
         for endpoint in endpoints.iter() {
             match client.get(*endpoint).send().await {
                 Ok(response) => {
                     let status = response.status();
-                    
+
                     // 处理瞬态错误：502, 503, 504 可以重试
                     if status.is_success() {
                         // 尝试读取响应体以获取更多信息
                         let body_text = response.text().await.unwrap_or_default();
                         return Ok(format!("healthy - {} - {}", status, body_text));
-                    } else if retry < max_retries - 1 &&
-                              (status == 502 || status == 503 || status == 504) {
+                    } else if retry < max_retries - 1
+                        && (status == 502 || status == 503 || status == 504)
+                    {
                         // 瞬态错误，记录并继续重试
-                        println!("健康检查遇到瞬态错误 {}，重试 {}/{}", status, retry + 1, max_retries);
+                        println!(
+                            "健康检查遇到瞬态错误 {}，重试 {}/{}",
+                            status,
+                            retry + 1,
+                            max_retries
+                        );
                         last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                         continue;
@@ -325,7 +413,12 @@ pub async fn proxy_health_check() -> Result<String, String> {
                 Err(e) => {
                     // 网络错误也可以重试
                     if retry < max_retries - 1 {
-                        println!("健康检查网络错误: {}，重试 {}/{}", e, retry + 1, max_retries);
+                        println!(
+                            "健康检查网络错误: {}，重试 {}/{}",
+                            e,
+                            retry + 1,
+                            max_retries
+                        );
                         last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                         continue;
@@ -335,14 +428,110 @@ pub async fn proxy_health_check() -> Result<String, String> {
                 }
             }
         }
-        
+
         // 如果所有端点都失败了，等待一下再重试
         if retry < max_retries - 1 {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
     }
-    
-    Err(format!("n8n 服务未响应: {}", last_error.unwrap_or_else(|| "未知错误".to_string())))
+
+    Err(format!(
+        "n8n 服务未响应: {}",
+        last_error.unwrap_or_else(|| "未知错误".to_string())
+    ))
+}
+
+/// 设置节点解禁状态并重启 n8n
+pub async fn set_nodes_unlocked<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+) -> Result<(), String> {
+    // 1. 更新全局状态
+    {
+        let mut unlocked = NODES_UNLOCKED.lock().unwrap();
+        *unlocked = enabled;
+    }
+    println!("[DEBUG] 节点解禁状态已设置为: {}", enabled);
+
+    // 2. 检查 n8n 是否正在运行
+    let is_running = {
+        let manager = PROCESS_MANAGER.lock().unwrap();
+        manager.has_child()
+    };
+
+    println!("[DEBUG] n8n 运行状态: {}", is_running);
+
+    if !is_running {
+        println!("[DEBUG] n8n 未运行，无需重启");
+        return Ok(());
+    }
+
+    // 3. 获取应用路径和二进制
+    let app_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    println!("[DEBUG] 应用路径: {:?}", app_path);
+
+    let n8n_bin = app_path.join("n8n-core/node_modules/n8n/bin/n8n");
+    println!("[DEBUG] n8n 二进制路径: {:?}", n8n_bin);
+
+    if !n8n_bin.exists() {
+        println!("[DEBUG] n8n 二进制文件不存在");
+        return Err("N8N binary not found".to_string());
+    }
+
+    let runtime_dir = app_path.join("runtime");
+    let node_path = manager::get_node_binary_path(runtime_dir);
+    println!("[DEBUG] node 二进制路径: {:?}", node_path);
+
+    if !node_path.exists() {
+        println!("[DEBUG] node 二进制文件不存在");
+        return Err("Node binary not found".to_string());
+    }
+
+    let data_dir = app_path.join("n8n-data");
+    if !data_dir.exists() {
+        println!("[DEBUG] 创建数据目录: {:?}", data_dir);
+        fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    }
+
+    // 4. 构建新的环境变量
+    let additional_envs = construct_n8n_envs();
+    println!("[DEBUG] 构建的环境变量: {:?}", additional_envs);
+
+    // 5. 物理重启：杀掉再重启
+    println!("[DEBUG] 正在重启 n8n 以应用节点解禁设置...");
+
+    // 5.1 杀掉现有进程
+    println!("[DEBUG] 杀掉现有进程...");
+    if let Ok(mut manager) = PROCESS_MANAGER.lock() {
+        manager.kill_child();
+    }
+
+    // 5.2 等待 500ms 确保端口释放
+    println!("[DEBUG] 等待 500ms 确保端口释放...");
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // 5.3 重新启动 n8n
+    println!("[DEBUG] 重新启动 n8n...");
+    match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
+        Ok(_) => {
+            println!("[DEBUG] n8n 已重启，节点解禁设置已应用");
+            Ok(())
+        }
+        Err(e) => {
+            println!("[DEBUG] 重启 n8n 失败: {}", e);
+            Err(e)
+        }
+    }
+}
+
+/// 获取节点解禁状态
+pub async fn get_nodes_unlocked() -> Result<bool, String> {
+    let unlocked = NODES_UNLOCKED.lock().unwrap();
+    Ok(*unlocked)
 }
 
 /// 关闭 n8n 进程

@@ -42,12 +42,8 @@ pub fn shutdown_n8n() {
 
 /// 向后兼容的包装函数 - 启动 Cloudflare Tunnel
 #[tauri::command]
-pub async fn start_tunnel<R: Runtime>(
-    app: AppHandle<R>, 
-    window: Window<R>,
-    cloudflared_path: String
-) -> Result<(), String> {
-    tunnel::start_tunnel(app, window, cloudflared_path).await
+pub async fn start_tunnel<R: Runtime>(app: AppHandle<R>, cloudflared_path: String) -> Result<(), String> {
+    tunnel::start_tunnel(app, cloudflared_path).await
 }
 
 /// 向后兼容的包装函数 - 停止 Cloudflare Tunnel
@@ -80,11 +76,6 @@ pub async fn check_cloudflared_version<R: Runtime>(app: AppHandle<R>) -> Result<
     cloudflared::check_cloudflared_version(app).await
 }
 
-/// 向后兼容的包装函数 - 清理 cloudflared 缓存
-#[tauri::command]
-pub async fn clear_cloudflared_cache<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    cloudflared::clear_cloudflared_cache(app).await
-}
 
 /// 向后兼容的包装函数 - 获取隧道配置
 #[tauri::command]
@@ -130,6 +121,18 @@ pub async fn get_tunnel_errors<R: Runtime>(app: AppHandle<R>) -> Result<Vec<Tunn
 #[tauri::command]
 pub async fn proxy_health_check() -> Result<String, String> {
     n8n_core::proxy_health_check().await
+}
+
+/// 设置节点解禁状态
+#[tauri::command]
+pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Result<(), String> {
+    n8n_core::set_nodes_unlocked(app, enabled).await
+}
+
+/// 获取节点解禁状态
+#[tauri::command]
+pub async fn get_nodes_unlocked() -> Result<bool, String> {
+    n8n_core::get_nodes_unlocked().await
 }
 
 /// 切换侧边栏状态

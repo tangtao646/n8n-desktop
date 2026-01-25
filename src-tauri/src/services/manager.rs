@@ -3,6 +3,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::collections::HashMap;
 
 /// 1. 定义一个全局的进程管理器
 pub static PROCESS_MANAGER: Lazy<Mutex<ProcessManager>> =
@@ -30,13 +31,17 @@ impl ProcessManager {
             }
         }
     }
+
+    pub fn has_child(&self) -> bool {
+        self.child.is_some()
+    }
 }
 
 pub fn get_node_url() -> Result<String, String> {
     // n8n requires Node.js >=20.19 <= 24.x
     // Using Node.js 20.19.0 which is the minimum supported version
     let version = "v20.19.0";
-    let base_url ="https://nodejs.org/dist/";
+    let base_url = "https://nodejs.org/dist/";
     //let base_url = "https://mirrors.huaweicloud.com/nodejs"; //使用华为云镜像下载节点文件
     match (env::consts::OS, env::consts::ARCH) {
         ("macos", "aarch64") => Ok(format!(
@@ -109,7 +114,12 @@ fn search_node_binary(dir: &PathBuf, target: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn start_node(node_path: PathBuf, n8n_bin: PathBuf, user_data: PathBuf) -> Result<(), String> {
+pub fn start_node(
+    node_path: PathBuf,
+    n8n_bin: PathBuf,
+    user_data: PathBuf,
+    additional_envs: HashMap<String, String>, // 接收来自 tunnel.rs 的动态 URL
+) -> Result<(), String> {
     #[cfg(unix)]
     let _ = Command::new("pkill").arg("-9").arg("node").output();
 
@@ -131,6 +141,10 @@ pub fn start_node(node_path: PathBuf, n8n_bin: PathBuf, user_data: PathBuf) -> R
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    for (key, value) in additional_envs {
+        cmd.env(key, value);
+    }
 
     #[cfg(windows)]
     {

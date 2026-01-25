@@ -6,8 +6,6 @@ use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env::set_var("NODES_EXCLUDE", "[]");
-    env::set_var("N8N_BLOCK_NODES", "");//解除节点禁用
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -19,6 +17,8 @@ pub fn run() {
             api::commands::launch_n8n,
             api::commands::shutdown_n8n,
             api::commands::proxy_health_check,
+            api::commands::set_nodes_unlocked,
+            api::commands::get_nodes_unlocked,
             // 隧道功能
             api::commands::start_tunnel,
             api::commands::stop_tunnel,
@@ -33,7 +33,6 @@ pub fn run() {
             // cloudflared 管理
             api::commands::download_cloudflared,
             api::commands::check_cloudflared_version,
-            api::commands::clear_cloudflared_cache,
             // 侧边栏管理
             api::commands::toggle_sidebar,
         ])
@@ -57,6 +56,19 @@ pub fn run() {
                 // 在应用退出前，直接调用 shutdown_n8n
                 // 它现在是同步的，所以能保证在退出前完成
                 api::commands::shutdown_n8n();
+
+                // 2. 关键：关闭隧道
+                // 由于 RunEvent 闭包是同步的，我们直接用阻塞方式杀死进程
+                #[cfg(unix)]
+                let _ = std::process::Command::new("pkill")
+                    .args(&["-f", "cloudflared"])
+                    .output();
+                #[cfg(windows)]
+                let _ = std::process::Command::new("taskkill")
+                    .args(&["/F", "/IM", "cloudflared.exe", "/T"])
+                    .output();
+
+                println!("Application exiting: Cleaned up n8n and tunnel processes.");
             }
         });
 }
