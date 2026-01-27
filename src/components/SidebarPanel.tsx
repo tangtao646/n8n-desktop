@@ -32,6 +32,8 @@ interface CloudflaredVersionInfo {
 interface TunnelConfig {
   custom_domain?: string;
   use_custom_domain?: boolean;
+  tunnel_mode?: "temporary" | "custom-domain" | "token";
+  tunnel_token?: string;
   [key: string]: unknown;
 }
 
@@ -56,6 +58,8 @@ type AppState = {
   nodeUnblockEnabled: boolean;
   customDomain: string;
   useCustomDomain: boolean;
+  tunnelMode: "temporary" | "custom-domain" | "token"; // 隧道模式
+  tunnelToken: string; // Cloudflare Tunnel Token
 };
 
 // ========== 状态映射 ==========
@@ -82,6 +86,8 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     nodeUnblockEnabled: false,
     customDomain: "",
     useCustomDomain: false,
+    tunnelMode: "temporary",
+    tunnelToken: "",
   });
 
   const [loading, setLoading] = useState<LoadingState>({
@@ -125,6 +131,12 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         }
         if (config.use_custom_domain !== undefined) {
           updateAppState({ useCustomDomain: config.use_custom_domain });
+        }
+        if (config.tunnel_mode) {
+          updateAppState({ tunnelMode: config.tunnel_mode });
+        }
+        if (config.tunnel_token) {
+          updateAppState({ tunnelToken: config.tunnel_token });
         }
       } catch (err) {
         console.error("Failed to load tunnel config:", err);
@@ -217,22 +229,47 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
     try {
       const domainToSave = appState.customDomain.trim();
-      if (appState.useCustomDomain && domainToSave && !domainToSave.includes("://")) {
-        alert("请输入完整的域名（包含 http:// 或 https://）");
-        updateLoadingState({ domainConfig: false });
-        return;
+      const tokenToSave = appState.tunnelToken.trim();
+
+      // 验证输入
+      if (appState.tunnelMode === "custom-domain") {
+        if (!domainToSave) {
+          alert("请输入自定义域名");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
+        if (!domainToSave.includes("://")) {
+          alert("请输入完整的域名（包含 http:// 或 https://）");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
       }
 
-      await invoke("apply_custom_domain_config", {
+      if (appState.tunnelMode === "token") {
+        if (!tokenToSave) {
+          alert("请输入 Cloudflare Tunnel Token");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
+        // 简单的 Token 格式验证（Cloudflare Token 通常很长）
+        if (tokenToSave.length < 50) {
+          alert("Token 格式似乎不正确，请确保复制完整的 Token");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
+      }
+
+      await invoke("apply_tunnel_config", {
+        tunnelMode: appState.tunnelMode,
         customDomain: domainToSave || null,
-        useCustomDomain: appState.useCustomDomain,
+        tunnelToken: tokenToSave || null,
       });
 
-      alert("域名配置已保存并应用");
+      alert("隧道配置已保存并应用");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("Failed to save custom domain config:", err);
-      alert(`保存域名配置失败: ${errorMessage}`);
+      console.error("Failed to save tunnel config:", err);
+      alert(`保存隧道配置失败: ${errorMessage}`);
     } finally {
       updateLoadingState({ domainConfig: false });
     }
@@ -488,66 +525,104 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
   const renderCustomDomainSection = () => (
     <div className="custom-domain-section mt-4 pt-4 border-t border-gray-200">
-      <div className="service-header">
-        <div className="service-info">
-          <h4 className="service-name text-sm">自定义域名</h4>
-          <span className="service-status text-blue-600 text-sm">
-            {appState.useCustomDomain ? "已启用" : "已禁用"}
-          </span>
+      <h4 className="service-name text-sm mb-3">隧道配置</h4>
+
+      {/* 隧道模式选择 */}
+      <div className="tunnel-mode-selector mb-4">
+        <div className="flex gap-2">
+          {(["temporary", "custom-domain", "token"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => updateAppState({ tunnelMode: mode })}
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                fontSize: "12px",
+                border: "1px solid #cbd5e1",
+                borderRadius: "4px",
+                backgroundColor: appState.tunnelMode === mode ? "#3b82f6" : "#f1f5f9",
+                color: appState.tunnelMode === mode ? "white" : "#334155",
+                cursor: "pointer",
+                fontWeight: "500",
+                transition: "all 0.2s",
+              }}
+            >
+              {mode === "temporary" && "临时隧道"}
+              {mode === "custom-domain" && "自定义域名"}
+              {mode === "token" && "Token 固定"}
+            </button>
+          ))}
         </div>
-        <div className="service-switch">
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={appState.useCustomDomain}
-              onChange={(e) => updateAppState({ useCustomDomain: e.target.checked })}
-              disabled={loading.domainConfig}
-            />
-            <span className="slider"></span>
-          </label>
-        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          {appState.tunnelMode === "temporary" && "每次启动随机生成临时公网地址"}
+          {appState.tunnelMode === "custom-domain" && "使用自定义域名作为公网地址"}
+          {appState.tunnelMode === "token" && "使用 Cloudflare Tunnel Token 建立固定隧道"}
+        </p>
       </div>
 
-      {appState.useCustomDomain && (
-        <div className="mt-3">
-          <div className="mb-2">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              自定义域名
-            </label>
-            <input
-              type="text"
-              value={appState.customDomain}
-              onChange={(e) => updateAppState({ customDomain: e.target.value })}
-              placeholder="https://your-domain.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={loading.domainConfig}
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              请输入完整的域名，包含 http:// 或 https://
-            </p>
-          </div>
+      {/* 自定义域名输入 */}
+      {appState.tunnelMode === "custom-domain" && (
+        <div className="mb-3">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            自定义域名
+          </label>
+          <input
+            type="text"
+            value={appState.customDomain}
+            onChange={(e) => updateAppState({ customDomain: e.target.value })}
+            placeholder="https://your-domain.com"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={loading.domainConfig}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
+          </p>
         </div>
       )}
 
-      <div className="mt-4">
-        <button
-          onClick={saveCustomDomainConfig}
-          disabled={loading.domainConfig || (appState.useCustomDomain && !appState.customDomain.trim())}
-          className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading.domainConfig ? (
-            <>
-              <svg className="spinner inline mr-2" width="16" height="16" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              </svg>
-              保存域名配置
-            </>
-          ) : "保存域名配置"}
-        </button>
-        <p className="text-xs text-gray-500 mt-2">
-          保存后会自动重启 n8n 以应用新的域名配置
-        </p>
-      </div>
+      {/* Token 输入 */}
+      {appState.tunnelMode === "token" && (
+        <div className="mb-3">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Tunnel Token
+          </label>
+          <textarea
+            value={appState.tunnelToken}
+            onChange={(e) => updateAppState({ tunnelToken: e.target.value })}
+            placeholder="粘贴您的 Cloudflare Tunnel Token..."
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+            rows={3}
+            disabled={loading.domainConfig}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
+          </p>
+        </div>
+      )}
+
+      {/* 保存按钮 */}
+      {(appState.tunnelMode === "custom-domain" || appState.tunnelMode === "token") && (
+        <div>
+          <button
+            onClick={saveCustomDomainConfig}
+            disabled={loading.domainConfig}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              backgroundColor: loading.domainConfig ? "#cbd5e1" : "#3b82f6",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: loading.domainConfig ? "not-allowed" : "pointer",
+              fontSize: "12px",
+              fontWeight: "500",
+              transition: "background-color 0.2s",
+            }}
+          >
+            {loading.domainConfig ? "保存中..." : "保存配置"}
+          </button>
+        </div>
+      )}
     </div>
   );
 

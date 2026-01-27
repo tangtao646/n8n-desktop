@@ -137,7 +137,24 @@ pub async fn get_nodes_unlocked() -> Result<bool, String> {
     n8n_core::get_nodes_unlocked().await
 }
 
-/// 应用自定义域名配置并重启 n8n
+/// 应用新的隧道配置（支持三种模式）
+#[tauri::command]
+pub async fn apply_tunnel_config<R: Runtime>(
+    app: AppHandle<R>,
+    tunnel_mode: String,
+    custom_domain: Option<String>,
+    tunnel_token: Option<String>,
+) -> Result<(), String> {
+    tunnel::apply_tunnel_config(
+        app,
+        &tunnel_mode,
+        custom_domain,
+        tunnel_token,
+    )
+    .await
+}
+
+/// 应用自定义域名配置并重启 n8n（保留以向后兼容）
 #[tauri::command]
 pub async fn apply_custom_domain_config<R: Runtime>(
     app: AppHandle<R>,

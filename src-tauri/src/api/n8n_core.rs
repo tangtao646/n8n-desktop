@@ -43,21 +43,26 @@ static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // --- 内部辅助函数 ---
 
-/// 确定最终的隧道 URL（使用卫语句简化嵌套逻辑）
+/// 确定最终的隧道 URL（根据隧道模式和配置）
 fn determine_tunnel_url(
-    use_custom_domain: bool,
+    tunnel_mode: &str,
     custom_domain: Option<String>,
     tunnel_url: Option<String>,
 ) -> Option<String> {
-    // 卫语句：如果未启用自定义域名，直接返回隧道 URL
-    if !use_custom_domain {
-        return tunnel_url;
-    }
-
-    // 处理自定义域名逻辑
-    match custom_domain {
-        Some(domain) if !domain.trim().is_empty() => Some(domain),
-        _ => tunnel_url, // 自定义域名为空或 None，回退到隧道 URL
+    match tunnel_mode {
+        "custom-domain" => {
+            // 自定义域名模式：返回配置的自定义域名
+            custom_domain.filter(|d| !d.trim().is_empty())
+        }
+        "token" => {
+            // Token 模式：使用 cloudflared 自动生成的 URL
+            // 这个 URL 来自 cloudflared 的输出
+            tunnel_url
+        }
+        _ => {
+            // 临时隧道模式：使用 cloudflared 生成的临时 URL
+            tunnel_url
+        }
     }
 }
 
@@ -76,11 +81,11 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
 
     // 卫语句：如果隧道未启用，跳过隧道相关环境变量设置
     if tunnel_enabled {
-        // 检查是否使用自定义域名
-        let (use_custom_domain, custom_domain) = {
+        // 获取隧道配置和 URL
+        let (tunnel_mode, custom_domain) = {
             let config_guard = TUNNEL_CONFIG.lock().unwrap();
             (
-                config_guard.use_custom_domain,
+                config_guard.tunnel_mode.clone(),
                 config_guard.custom_domain.clone(),
             )
         };
@@ -91,7 +96,7 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
         };
 
         // 使用辅助函数确定最终 URL
-        if let Some(final_url) = determine_tunnel_url(use_custom_domain, custom_domain, tunnel_url)
+        if let Some(final_url) = determine_tunnel_url(&tunnel_mode, custom_domain, tunnel_url)
         {
             envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
             envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
