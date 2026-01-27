@@ -64,9 +64,13 @@ impl ProcessManager {
     /// 终止子进程
     pub fn kill_child(&mut self) {
         if let Some(mut child) = self.child.take() {
+            // 首先尝试优雅地杀死进程
             if let Err(error) = child.kill() {
                 eprintln!("终止进程失败: {}", error);
             }
+            
+            // 等待进程完全退出，确保资源释放
+            let _ = child.wait();
         }
     }
 

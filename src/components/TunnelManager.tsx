@@ -1,26 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
 
-// 隧道状态类型
+// ========== 常量定义 ==========
+const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
+const AUTO_START_DELAY_MS = 1000;
+
+// ========== 类型定义 ==========
 export type TunnelStatus = "offline" | "connecting" | "online" | "error";
 
-// 隧道事件类型
-interface TunnelEvent {
+interface TunnelEventPayload {
   status: string;
   url?: string;
   progress?: number;
   message?: string;
 }
 
-// 隧道配置类型
 interface TunnelConfig {
   last_url?: string;
   auto_start: boolean;
   created_at: string;
 }
 
-// Cloudflared 版本信息
 export interface CloudflaredVersionInfo {
   installed: boolean;
   version?: string;
@@ -34,298 +35,347 @@ interface TunnelManagerProps {
   className?: string;
 }
 
+type TunnelState = {
+  status: TunnelStatus;
+  url: string;
+  isLoading: boolean;
+  error: string;
+};
+
+// ========== 状态映射 ==========
+const STATUS_DISPLAY_MAP: Record<TunnelStatus, { text: string; color: string }> = {
+  offline: { text: "隧道已关闭", color: "text-gray-600" },
+  connecting: { text: "隧道连接中...", color: "text-yellow-600" },
+  online: { text: "隧道已连接", color: "text-green-600" },
+  error: { text: "隧道错误", color: "text-red-600" },
+};
+
+// ========== 主组件 ==========
 export default function TunnelManager({ onStatusChange, className = "" }: TunnelManagerProps) {
-  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>("offline");
-  const [tunnelUrl, setTunnelUrl] = useState<string>("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  // ========== 状态定义 ==========
+  const [tunnelState, setTunnelState] = useState<TunnelState>({
+    status: "offline",
+    url: "",
+    isLoading: false,
+    error: "",
+  });
   const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
   const [config, setConfig] = useState<TunnelConfig>({ auto_start: false, created_at: "" });
   const [showConfig, setShowConfig] = useState(false);
 
-  // 加载隧道状态和配置
-  const loadTunnelState = async () => {
+  // ========== 工具函数 ==========
+  const getStatusDisplay = useCallback((status: TunnelStatus) => {
+    return STATUS_DISPLAY_MAP[status] || { text: "未知状态", color: "text-gray-600" };
+  }, []);
+
+  const notifyParent = useCallback((status: TunnelStatus, url?: string) => {
+    onStatusChange?.(status, url);
+  }, [onStatusChange]);
+
+  // ========== 核心逻辑函数 ==========
+  const loadTunnelState = useCallback(async () => {
     try {
-      // 获取隧道状态
-      const status = await invoke<TunnelEvent>("get_tunnel_status");
-      if (status.url) {
-        setTunnelUrl(status.url);
-        setTunnelStatus(status.status.toLowerCase() as TunnelStatus);
-      } else {
-        setTunnelStatus(status.status.toLowerCase() as TunnelStatus);
-      }
+      const [status, tunnelConfig, versionInfo] = await Promise.all([
+        invoke<TunnelEventPayload>("get_tunnel_status"),
+        invoke<TunnelConfig>("get_tunnel_config"),
+        invoke<CloudflaredVersionInfo>("check_cloudflared_version"),
+      ]);
 
-      // 获取隧道配置
-      const tunnelConfig = await invoke<TunnelConfig>("get_tunnel_config");
+      setTunnelState(prev => ({
+        ...prev,
+        status: status.status.toLowerCase() as TunnelStatus,
+        url: status.url || prev.url,
+      }));
       setConfig(tunnelConfig);
-
-      // 获取 cloudflared 版本信息
-      const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
       setCloudflaredInfo(versionInfo);
 
-      // 通知父组件状态变化
-      if (onStatusChange) {
-        onStatusChange(status.status.toLowerCase() as TunnelStatus, status.url);
-      }
+      notifyParent(status.status.toLowerCase() as TunnelStatus, status.url);
     } catch (err) {
       console.error("Failed to load tunnel state:", err);
-      setError("无法加载隧道状态");
+      setTunnelState(prev => ({
+        ...prev,
+        error: "无法加载隧道状态",
+      }));
     }
-  };
+  }, [notifyParent]);
 
-  // 启动隧道
-  const startTunnel = async () => {
-    if (isLoading) return;
-    
-    setIsLoading(true);
-    setError("");
-    
+  const startTunnel = useCallback(async () => {
+    if (tunnelState.isLoading) return;
+
+    setTunnelState(prev => ({
+      ...prev,
+      isLoading: true,
+      error: "",
+      status: "connecting"
+    }));
+
     try {
-      // 首先检查 cloudflared 是否可用
       const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
-      
-      if (!versionInfo.installed) {
-        // 如果没有安装 cloudflared，需要先下载
-        setTunnelStatus("connecting");
-        setError("正在下载 cloudflared...");
-        
-        // 这里需要实现 cloudflared 下载逻辑
-        // 暂时使用默认路径
-        const cloudflaredPath = "cloudflared";
-        await invoke("start_tunnel", { cloudflaredPath });
-      } else {
-        // 使用现有的 cloudflared
-        const cloudflaredPath = versionInfo.path || "cloudflared";
-        await invoke("start_tunnel", { cloudflaredPath });
-      }
-      
-      // 状态更新将通过事件监听器处理
-    } catch (err: any) {
-      console.error("Failed to start tunnel:", err);
-      setError(`启动隧道失败: ${err.message || err}`);
-      setTunnelStatus("error");
-      setIsLoading(false);
-    }
-  };
+      const cloudflaredPath = versionInfo.installed
+        ? versionInfo.path || CLOUDFLARED_DEFAULT_PATH
+        : CLOUDFLARED_DEFAULT_PATH;
 
-  // 停止隧道
-  const stopTunnel = async () => {
-    if (isLoading) return;
-    
-    setIsLoading(true);
-    setError("");
-    
+      if (!versionInfo.installed) {
+        setTunnelState(prev => ({
+          ...prev,
+          error: "正在下载 cloudflared...",
+        }));
+      }
+
+      await invoke("start_tunnel", { cloudflaredPath });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("Failed to start tunnel:", err);
+      setTunnelState(prev => ({
+        ...prev,
+        error: `启动隧道失败: ${errorMessage}`,
+        status: "error",
+        isLoading: false,
+      }));
+    }
+  }, [tunnelState.isLoading]);
+
+  const stopTunnel = useCallback(async () => {
+    if (tunnelState.isLoading) return;
+
+    setTunnelState(prev => ({ ...prev, isLoading: true, error: "" }));
+
     try {
       await invoke("stop_tunnel");
-      // 状态更新将通过事件监听器处理
-    } catch (err: any) {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Failed to stop tunnel:", err);
-      setError(`停止隧道失败: ${err.message || err}`);
-      setIsLoading(false);
+      setTunnelState(prev => ({
+        ...prev,
+        error: `停止隧道失败: ${errorMessage}`,
+        isLoading: false,
+      }));
     }
-  };
+  }, [tunnelState.isLoading]);
 
-  // 复制隧道 URL 到剪贴板
-  const copyTunnelUrl = async () => {
-    if (!tunnelUrl) return;
-    
+  const copyTunnelUrl = useCallback(async () => {
+    if (!tunnelState.url) return;
+
     try {
       await invoke("copy_tunnel_url");
-      // 可以在这里添加复制成功的提示
       alert("隧道 URL 已复制到剪贴板");
     } catch (err) {
       console.error("Failed to copy URL:", err);
-      setError("复制 URL 失败");
+      setTunnelState(prev => ({
+        ...prev,
+        error: "复制 URL 失败",
+      }));
     }
-  };
+  }, [tunnelState.url]);
 
-  // 更新隧道配置
-  const updateConfig = async (updates: Partial<TunnelConfig>) => {
+  const updateConfig = useCallback(async (updates: Partial<TunnelConfig>) => {
     try {
       await invoke("update_tunnel_config", updates);
-      await loadTunnelState(); // 重新加载配置
+      await loadTunnelState();
     } catch (err) {
       console.error("Failed to update config:", err);
-      setError("更新配置失败");
+      setTunnelState(prev => ({
+        ...prev,
+        error: "更新配置失败",
+      }));
     }
-  };
+  }, [loadTunnelState]);
 
-  // 清理 cloudflared 缓存
-  const clearCloudflaredCache = async () => {
+  const clearCloudflaredCache = useCallback(async () => {
     try {
       await invoke("clear_cloudflared_cache");
-      await loadTunnelState(); // 重新加载 cloudflared 信息
+      await loadTunnelState();
       alert("cloudflared 缓存已清理");
     } catch (err) {
       console.error("Failed to clear cache:", err);
-      setError("清理缓存失败");
+      setTunnelState(prev => ({
+        ...prev,
+        error: "清理缓存失败",
+      }));
     }
-  };
+  }, [loadTunnelState]);
 
-  // 初始化：加载状态和设置事件监听
+  // ========== 事件处理函数 ==========
+  const handleTunnelUpdate = useCallback((event: Event<TunnelEventPayload>) => {
+    const { status, url, message } = event.payload;
+    const newStatus = status.toLowerCase() as TunnelStatus;
+
+    setTunnelState(prev => {
+      const updates: Partial<TunnelState> = {
+        status: newStatus,
+        url: url || prev.url,
+      };
+
+      // 处理错误消息
+      if (message && (newStatus === "error" || newStatus === "connecting")) {
+        updates.error = message;
+      } else if (newStatus === "online") {
+        updates.isLoading = false;
+        updates.error = "";
+      } else if (newStatus === "error" || newStatus === "offline") {
+        updates.isLoading = false;
+        // 保留现有的错误消息，除非有新的消息
+        if (!message) {
+          updates.error = prev.error;
+        }
+      }
+
+      // 如果是连接中状态，更新错误消息但不停止加载
+      if (newStatus === "connecting" && message) {
+        updates.error = message;
+        updates.isLoading = true;
+      }
+
+      return { ...prev, ...updates };
+    });
+
+    notifyParent(newStatus, url);
+  }, [notifyParent]);
+
+  // ========== 副作用 ==========
   useEffect(() => {
     let unlistenTunnelUpdate: UnlistenFn | null = null;
     let unlistenTunnelCopied: UnlistenFn | null = null;
 
     const setupListeners = async () => {
       try {
-        // 监听隧道状态更新事件
-        unlistenTunnelUpdate = await listen<TunnelEvent>("tunnel-update", (event) => {
-          const { status, url } = event.payload;
-          
-          setTunnelStatus(status.toLowerCase() as TunnelStatus);
-          if (url) {
-            setTunnelUrl(url);
-          }
-          
-          // 如果隧道在线，停止加载状态
-          if (status.toLowerCase() === "online") {
-            setIsLoading(false);
-            setError("");
-          }
-          
-          // 如果隧道连接失败
-          if (status.toLowerCase() === "error" || status.toLowerCase() === "offline") {
-            setIsLoading(false);
-          }
-          
-          // 通知父组件
-          if (onStatusChange) {
-            onStatusChange(status.toLowerCase() as TunnelStatus, url);
-          }
-        });
-
-        // 监听复制成功事件
-        unlistenTunnelCopied = await listen<TunnelEvent>("tunnel-copied", () => {
-          // 可以在这里显示复制成功的通知
+        unlistenTunnelUpdate = await listen<TunnelEventPayload>("tunnel-update", handleTunnelUpdate);
+        unlistenTunnelCopied = await listen<TunnelEventPayload>("tunnel-copied", () => {
           console.log("Tunnel URL copied successfully");
         });
 
-        // 初始加载状态
         await loadTunnelState();
 
-        // 如果配置了自动启动且隧道未运行，自动启动隧道
-        if (config.auto_start && tunnelStatus === "offline" && config.last_url) {
+        if (config.auto_start && tunnelState.status === "offline" && config.last_url) {
           setTimeout(() => {
             startTunnel();
-          }, 1000);
+          }, AUTO_START_DELAY_MS);
         }
       } catch (err) {
         console.error("Failed to setup tunnel listeners:", err);
-        setError("无法设置隧道监听器");
+        setTunnelState(prev => ({
+          ...prev,
+          error: "无法设置隧道监听器",
+        }));
       }
     };
 
     setupListeners();
 
-    // 清理函数
     return () => {
-      if (unlistenTunnelUpdate) unlistenTunnelUpdate();
-      if (unlistenTunnelCopied) unlistenTunnelCopied();
+      unlistenTunnelUpdate?.();
+      unlistenTunnelCopied?.();
     };
-  }, [config.auto_start]);
+  }, [config.auto_start, loadTunnelState, startTunnel, tunnelState.status, config.last_url, handleTunnelUpdate]);
 
-  // 状态显示文本
-  const getStatusText = () => {
-    switch (tunnelStatus) {
-      case "offline": return "隧道已关闭";
-      case "connecting": return "隧道连接中...";
-      case "online": return "隧道已连接";
-      case "error": return "隧道错误";
-      default: return "未知状态";
-    }
-  };
+  // ========== 渲染函数 ==========
+  const renderStatusCard = () => {
+    const { text, color } = getStatusDisplay(tunnelState.status);
+    const isStopped = tunnelState.status === "offline" || tunnelState.status === "error";
+    const isConnecting = tunnelState.status === "connecting";
+    const isError = tunnelState.status === "error";
 
-  // 状态颜色
-  const getStatusColor = () => {
-    switch (tunnelStatus) {
-      case "online": return "text-green-600";
-      case "connecting": return "text-yellow-600";
-      case "error": return "text-red-600";
-      default: return "text-gray-600";
-    }
-  };
-
-  return (
-    <div className={`tunnel-manager ${className}`}>
-      <div className="tunnel-header">
-        <h3 className="text-lg font-semibold">Cloudflare 隧道</h3>
-        <button
-          onClick={() => setShowConfig(!showConfig)}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          {showConfig ? "隐藏配置" : "显示配置"}
-        </button>
-      </div>
-
-      {/* 隧道状态卡片 */}
-      <div className="tunnel-card">
-        <div className="tunnel-status">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className={`font-medium ${getStatusColor()}`}>
-                {getStatusText()}
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center">
+              <span className={`font-medium ${color}`}>
+                {text}
               </span>
-              {tunnelUrl && (
-                <div className="mt-1">
-                  <span className="text-sm text-gray-600">公网地址: </span>
-                  <a
-                    href={tunnelUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:text-blue-800 break-all"
-                  >
-                    {tunnelUrl}
-                  </a>
+              {isConnecting && tunnelState.isLoading && (
+                <div className="ml-3 flex items-center">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span className="ml-2 text-sm text-gray-600">正在连接...</span>
                 </div>
               )}
             </div>
+            {tunnelState.url && (
+              <div className="mt-1">
+                <span className="text-sm text-gray-600">公网地址: </span>
+                <a
+                  href={tunnelState.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:text-blue-800 break-all"
+                >
+                  {tunnelState.url}
+                </a>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex space-x-2">
+            {isStopped ? (
+              <button
+                onClick={startTunnel}
+                disabled={tunnelState.isLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {tunnelState.isLoading ? "启动中..." : "启动隧道"}
+              </button>
+            ) : (
+              <button
+                onClick={stopTunnel}
+                disabled={tunnelState.isLoading}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              >
+                {tunnelState.isLoading ? "停止中..." : "停止隧道"}
+              </button>
+            )}
             
-            <div className="flex space-x-2">
-              {tunnelStatus === "offline" || tunnelStatus === "error" ? (
-                <button
-                  onClick={startTunnel}
-                  disabled={isLoading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isLoading ? "启动中..." : "启动隧道"}
-                </button>
-              ) : (
-                <button
-                  onClick={stopTunnel}
-                  disabled={isLoading}
-                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                >
-                  {isLoading ? "停止中..." : "停止隧道"}
-                </button>
-              )}
-              
-              {tunnelUrl && (
-                <button
-                  onClick={copyTunnelUrl}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
-                >
-                  复制
-                </button>
-              )}
-            </div>
+            {tunnelState.url && (
+              <button
+                onClick={copyTunnelUrl}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+              >
+                复制
+              </button>
+            )}
+
+            {isError && !tunnelState.isLoading && (
+              <button
+                onClick={startTunnel}
+                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+              >
+                重试
+              </button>
+            )}
           </div>
         </div>
 
-        {/* 错误显示 */}
-        {error && (
-          <div className="mt-2 p-2 bg-red-50 text-red-700 rounded text-sm">
-            {error}
+        {tunnelState.error && (
+          <div className={`mt-2 p-2 rounded text-sm ${
+            isError ? 'bg-red-50 text-red-700' :
+            isConnecting ? 'bg-yellow-50 text-yellow-700' :
+            'bg-gray-50 text-gray-700'
+          }`}>
+            <div className="flex items-start">
+              <span className="flex-shrink-0">
+                {isError ? '❌' : isConnecting ? '⚠️' : 'ℹ️'}
+              </span>
+              <span className="ml-2">{tunnelState.error}</span>
+            </div>
+            {isError && (
+              <div className="mt-2 text-xs">
+                <p className="text-gray-600">可能的原因:</p>
+                <ul className="list-disc pl-5 mt-1 space-y-1">
+                  <li>网络连接不稳定</li>
+                  <li>Cloudflare 服务暂时不可用</li>
+                  <li>防火墙或代理设置阻止连接</li>
+                  <li>尝试点击"重试"按钮重新连接</li>
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
-        {/* cloudflared 信息 */}
         {cloudflaredInfo && (
           <div className="mt-3 text-sm text-gray-600">
             <div className="flex items-center">
               <span className="font-medium">cloudflared: </span>
               <span className="ml-1">
-                {cloudflaredInfo.installed 
+                {cloudflaredInfo.installed
                   ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
                   : "未安装"}
               </span>
@@ -338,61 +388,81 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
           </div>
         )}
       </div>
+    );
+  };
 
-      {/* 配置面板 */}
-      {showConfig && (
-        <div className="tunnel-config mt-4 p-4 bg-gray-50 rounded">
-          <h4 className="font-medium mb-3">隧道配置</h4>
-          
-          <div className="space-y-3">
-            {/* 自动启动开关 */}
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                id="auto-start"
-                checked={config.auto_start}
-                onChange={(e) => updateConfig({ auto_start: e.target.checked })}
-                className="mr-2"
-              />
-              <label htmlFor="auto-start" className="text-sm">
-                应用启动时自动连接隧道
-              </label>
+  const renderConfigPanel = () => {
+    if (!showConfig) return null;
+
+    return (
+      <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <h4 className="font-medium mb-3">隧道配置</h4>
+        
+        <div className="space-y-3">
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="auto-start"
+              checked={config.auto_start}
+              onChange={(e) => updateConfig({ auto_start: e.target.checked })}
+              className="mr-2"
+            />
+            <label htmlFor="auto-start" className="text-sm">
+              应用启动时自动连接隧道
+            </label>
+          </div>
+
+          {config.last_url && (
+            <div className="text-sm">
+              <div className="font-medium">上次隧道地址:</div>
+              <div className="text-gray-600 break-all">{config.last_url}</div>
             </div>
+          )}
 
-            {/* 上次使用的 URL */}
-            {config.last_url && (
-              <div className="text-sm">
-                <div className="font-medium">上次隧道地址:</div>
-                <div className="text-gray-600 break-all">{config.last_url}</div>
-              </div>
-            )}
-
-            {/* 缓存管理 */}
-            <div className="pt-2 border-t">
-              <button
-                onClick={clearCloudflaredCache}
-                className="px-3 py-1 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
-              >
-                清理 cloudflared 缓存
-              </button>
-              <p className="text-xs text-gray-500 mt-1">
-                清理下载的 cloudflared 二进制文件缓存
-              </p>
-            </div>
+          <div className="pt-2 border-t">
+            <button
+              onClick={clearCloudflaredCache}
+              className="px-3 py-1 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+            >
+              清理 cloudflared 缓存
+            </button>
+            <p className="text-xs text-gray-500 mt-1">
+              清理下载的 cloudflared 二进制文件缓存
+            </p>
           </div>
         </div>
-      )}
-
-      {/* 使用说明 */}
-      <div className="mt-4 text-sm text-gray-600">
-        <p className="font-medium">使用说明:</p>
-        <ul className="list-disc pl-5 mt-1 space-y-1">
-          <li>启动隧道后，将获得一个临时的公网地址</li>
-          <li>该地址可用于 OAuth 回调、Webhook 等外部服务访问</li>
-          <li>隧道关闭后地址失效，确保隐私安全</li>
-          <li>复制地址用于 Google OAuth、GitHub Webhook 等配置</li>
-        </ul>
       </div>
+    );
+  };
+
+  const renderInstructions = () => (
+    <div className="mt-4 text-sm text-gray-600">
+      <p className="font-medium">使用说明:</p>
+      <ul className="list-disc pl-5 mt-1 space-y-1">
+        <li>启动隧道后，将获得一个临时的公网地址</li>
+        <li>该地址可用于 OAuth 回调、Webhook 等外部服务访问</li>
+        <li>隧道关闭后地址失效，确保隐私安全</li>
+        <li>复制地址用于 Google OAuth、GitHub Webhook 等配置</li>
+      </ul>
+    </div>
+  );
+
+  // ========== 主渲染 ==========
+  return (
+    <div className={`space-y-4 ${className}`}>
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold">Cloudflare 隧道</h3>
+        <button
+          onClick={() => setShowConfig(!showConfig)}
+          className="text-sm text-gray-500 hover:text-gray-700"
+        >
+          {showConfig ? "隐藏配置" : "显示配置"}
+        </button>
+      </div>
+
+      {renderStatusCard()}
+      {renderConfigPanel()}
+      {renderInstructions()}
     </div>
   );
 }

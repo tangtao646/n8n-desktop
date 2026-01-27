@@ -1,14 +1,25 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
 
-interface SidebarPanelProps {
-  collapsed?: boolean;
-  onToggleSidebar?: () => void;
-  className?: string;
-}
+// ========== 常量定义 ==========
+const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
+const TUNNEL_START_TIMEOUT_MS = 60000;
+const TUNNEL_STOP_TIMEOUT_MS = 5000;
+const UPDATE_CHECK_DELAY_MS = 1500;
+const N8N_LOCAL_ADDRESS = "http://localhost:5678";
+const DEFAULT_APP_VERSION = "1.0.2";
 
+// ========== 类型定义 ==========
 type TunnelStatus = "offline" | "connecting" | "online" | "error";
+type N8nStatus = "running" | "stopped" | "starting";
+
+interface TunnelEventPayload {
+  status: string;
+  url?: string;
+  progress?: number;
+  message?: string;
+}
 
 interface CloudflaredVersionInfo {
   installed: boolean;
@@ -18,39 +29,102 @@ interface CloudflaredVersionInfo {
   cache_age_days?: number;
 }
 
-export default function SidebarPanel({ collapsed = false, onToggleSidebar, className = "" }: SidebarPanelProps) {
-  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>("offline");
-  const [tunnelUrl, setTunnelUrl] = useState<string>("");
-  const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
-  const [appVersion, setAppVersion] = useState<string>("1.0.0");
-  const [n8nStatus, setN8nStatus] = useState<"running" | "stopped" | "starting">("running");
-  const [isTunnelLoading, setIsTunnelLoading] = useState(false);
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [nodeUnblockEnabled, setNodeUnblockEnabled] = useState(false);
-  const [isNodeUnblockLoading, setIsNodeUnblockLoading] = useState(false);
-  const [customDomain, setCustomDomain] = useState<string>("");
-  const [useCustomDomain, setUseCustomDomain] = useState(false);
-  const [isDomainConfigLoading, setIsDomainConfigLoading] = useState(false);
+interface TunnelConfig {
+  custom_domain?: string;
+  use_custom_domain?: boolean;
+  [key: string]: unknown;
+}
 
-  // 加载应用信息
-  const loadAppInfo = async () => {
+interface SidebarPanelProps {
+  collapsed?: boolean;
+  onToggleSidebar?: () => void;
+  onTunnelOnline?: () => void;
+  className?: string;
+}
+
+type LoadingState = {
+  tunnel: boolean;
+  update: boolean;
+  nodeUnblock: boolean;
+  domainConfig: boolean;
+};
+
+type AppState = {
+  tunnelStatus: TunnelStatus;
+  tunnelUrl: string;
+  n8nStatus: N8nStatus;
+  nodeUnblockEnabled: boolean;
+  customDomain: string;
+  useCustomDomain: boolean;
+};
+
+// ========== 状态映射 ==========
+const N8N_STATUS_MAP: Record<N8nStatus, { text: string; color: string }> = {
+  running: { text: "运行中", color: "text-green-600" },
+  stopped: { text: "已停止", color: "text-red-600" },
+  starting: { text: "启动中", color: "text-yellow-600" },
+};
+
+const TUNNEL_STATUS_MAP: Record<TunnelStatus, { text: string; color: string }> = {
+  offline: { text: "隧道已关闭", color: "text-gray-600" },
+  connecting: { text: "隧道连接中...", color: "text-yellow-600" },
+  online: { text: "隧道已连接", color: "text-green-600" },
+  error: { text: "隧道错误", color: "text-red-600" },
+};
+
+// ========== 主组件 ==========
+export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTunnelOnline, className = "" }: SidebarPanelProps) {
+  // ========== 状态定义 ==========
+  const [appState, setAppState] = useState<AppState>({
+    tunnelStatus: "offline",
+    tunnelUrl: "",
+    n8nStatus: "running",
+    nodeUnblockEnabled: false,
+    customDomain: "",
+    useCustomDomain: false,
+  });
+
+  const [loading, setLoading] = useState<LoadingState>({
+    tunnel: false,
+    update: false,
+    nodeUnblock: false,
+    domainConfig: false,
+  });
+
+  const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
+  const [appVersion] = useState<string>(DEFAULT_APP_VERSION);
+
+  // ========== 工具函数 ==========
+  const getN8nStatusDisplay = useCallback((status: N8nStatus) => {
+    return N8N_STATUS_MAP[status] || { text: "未知", color: "text-gray-600" };
+  }, []);
+
+  const getTunnelStatusDisplay = useCallback((status: TunnelStatus) => {
+    return TUNNEL_STATUS_MAP[status] || { text: "未知状态", color: "text-gray-600" };
+  }, []);
+
+  const updateLoadingState = useCallback((updates: Partial<LoadingState>) => {
+    setLoading(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  const updateAppState = useCallback((updates: Partial<AppState>) => {
+    setAppState(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  // ========== 核心逻辑函数 ==========
+  const loadAppInfo = useCallback(async () => {
     try {
-      // 获取 cloudflared 信息
       const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
       setCloudflaredInfo(versionInfo);
 
-      // 获取应用版本（这里可以调用后端命令获取）
-      // 暂时使用固定值
-      setAppVersion("1.0.2");
-
-      // 加载隧道配置（包含自定义域名设置）
+      // 加载隧道配置
       try {
-        const config = await invoke<any>("get_tunnel_config");
+        const config = await invoke<TunnelConfig>("get_tunnel_config");
         if (config.custom_domain) {
-          setCustomDomain(config.custom_domain);
+          updateAppState({ customDomain: config.custom_domain });
         }
         if (config.use_custom_domain !== undefined) {
-          setUseCustomDomain(config.use_custom_domain);
+          updateAppState({ useCustomDomain: config.use_custom_domain });
         }
       } catch (err) {
         console.error("Failed to load tunnel config:", err);
@@ -58,48 +132,34 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     } catch (err) {
       console.error("Failed to load app info:", err);
     }
-  };
+  }, [updateAppState]);
 
-  // 检查 n8n 状态
-  const checkN8nStatus = async () => {
+  const checkN8nStatus = useCallback(async () => {
     try {
       // 这里可以调用后端命令检查 n8n 状态
-      // 暂时假设 n8n 在运行
-      setN8nStatus("running");
+      updateAppState({ n8nStatus: "running" });
     } catch (err) {
       console.error("Failed to check n8n status:", err);
-      setN8nStatus("stopped");
+      updateAppState({ n8nStatus: "stopped" });
     }
-  };
+  }, [updateAppState]);
 
-  // 启动隧道
-  const startTunnel = async () => {
-    if (isTunnelLoading) return;
+  const startTunnel = useCallback(async () => {
+    if (loading.tunnel) return;
 
-    setIsTunnelLoading(true);
-    setTunnelStatus("connecting");
+    updateLoadingState({ tunnel: true });
+    updateAppState({ tunnelStatus: "connecting" });
 
     try {
-      // 首先检查 cloudflared 是否可用
       const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
-      console.log("Cloudflared version info:", versionInfo);
+      let cloudflaredPath = CLOUDFLARED_DEFAULT_PATH;
 
-      let cloudflaredPath = "cloudflared";
       if (versionInfo.installed && versionInfo.path) {
         cloudflaredPath = versionInfo.path;
-        console.log(`Using existing cloudflared from: "${cloudflaredPath}"`);
       } else {
-        // 如果没有安装 cloudflared，需要先下载
-        console.log("cloudflared not found, starting automatic download...");
-
         try {
-          // 下载 cloudflared
           await invoke("download_cloudflared");
-          console.log("cloudflared download completed");
-
-          // 重新检查版本
           const newVersionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
-          console.log("After download, cloudflared info:", newVersionInfo);
 
           if (!newVersionInfo.installed) {
             throw new Error("下载 cloudflared 失败，请检查网络连接或手动安装 cloudflared");
@@ -107,161 +167,150 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
           if (newVersionInfo.path) {
             cloudflaredPath = newVersionInfo.path;
-            console.log(`Using downloaded cloudflared from: "${cloudflaredPath}"`);
           }
-        } catch (downloadErr: any) {
-          console.error("Cloudflared download failed:", downloadErr);
-          throw new Error(`cloudflared 下载失败: ${downloadErr.message || downloadErr}. 请手动安装 cloudflared 或检查网络连接。`);
+        } catch (downloadErr) {
+          const errorMessage = downloadErr instanceof Error ? downloadErr.message : String(downloadErr);
+          throw new Error(`cloudflared 下载失败: ${errorMessage}. 请手动安装 cloudflared 或检查网络连接。`);
         }
       }
 
-      // 启动隧道
-      console.log("Starting tunnel with cloudflared path:", cloudflaredPath);
-      await invoke("start_tunnel", { cloudflaredPath: cloudflaredPath });
-      console.log("Tunnel start command sent successfully");
+      await invoke("start_tunnel", { cloudflaredPath });
 
-      // 状态更新将通过事件监听器处理
-      // 设置超时，防止无限加载
+      // 设置超时
       setTimeout(() => {
-        if (tunnelStatus === "connecting") {
-          console.log("Tunnel start timeout after 30 seconds");
-          setIsTunnelLoading(false);
-          setTunnelStatus("offline");
+        if (appState.tunnelStatus === "connecting") {
+          updateLoadingState({ tunnel: false });
+          updateAppState({ tunnelStatus: "offline" });
         }
-      }, 30000); // 30秒超时
-
-    } catch (err: any) {
+      }, TUNNEL_START_TIMEOUT_MS);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Failed to start tunnel:", err);
-      setTunnelStatus("error");
-      setIsTunnelLoading(false);
-      // 显示用户友好的错误信息
-      alert(`启动隧道失败: ${err.message || err}\n\n请确保:\n1. 网络连接正常\n2. 可以访问 GitHub\n3. 或者手动安装 cloudflared`);
+      updateAppState({ tunnelStatus: "error" });
+      updateLoadingState({ tunnel: false });
+
+      alert(`启动隧道失败: ${errorMessage}\n\n请确保:\n1. 网络连接正常\n2. 可以访问 GitHub\n3. 或者手动安装 cloudflared`);
     }
-  };
+  }, [loading.tunnel, appState.tunnelStatus, updateLoadingState, updateAppState]);
 
-  // 停止隧道
-  const stopTunnel = async () => {
-    if (isTunnelLoading) return;
+  const stopTunnel = useCallback(async () => {
+    if (loading.tunnel) return;
 
-    setIsTunnelLoading(true);
+    updateLoadingState({ tunnel: true });
+
     try {
       await invoke("stop_tunnel");
-      // 状态更新将通过事件监听器处理
-      // 设置超时，防止无限加载
+
       setTimeout(() => {
-        setIsTunnelLoading(false);
-      }, 5000); // 5秒超时
-    } catch (err: any) {
+        updateLoadingState({ tunnel: false });
+      }, TUNNEL_STOP_TIMEOUT_MS);
+    } catch (err) {
       console.error("Failed to stop tunnel:", err);
-      setIsTunnelLoading(false);
+      updateLoadingState({ tunnel: false });
     }
-  };
+  }, [loading.tunnel, updateLoadingState]);
 
-  // 保存自定义域名配置
-  const saveCustomDomainConfig = async () => {
-    if (isDomainConfigLoading) return;
+  const saveCustomDomainConfig = useCallback(async () => {
+    if (loading.domainConfig) return;
 
-    setIsDomainConfigLoading(true);
+    updateLoadingState({ domainConfig: true });
+
     try {
-      // 验证域名格式
-      const domainToSave = customDomain.trim();
-      if (useCustomDomain && domainToSave && !domainToSave.includes("://")) {
+      const domainToSave = appState.customDomain.trim();
+      if (appState.useCustomDomain && domainToSave && !domainToSave.includes("://")) {
         alert("请输入完整的域名（包含 http:// 或 https://）");
-        setIsDomainConfigLoading(false);
+        updateLoadingState({ domainConfig: false });
         return;
       }
 
-      console.log("Saving custom domain config:", {
-        customDomain: domainToSave || null,
-        useCustomDomain
-      });
-
-      // 调用后端命令应用配置
       await invoke("apply_custom_domain_config", {
         customDomain: domainToSave || null,
-        useCustomDomain
+        useCustomDomain: appState.useCustomDomain,
       });
 
       alert("域名配置已保存并应用");
-    } catch (err: any) {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Failed to save custom domain config:", err);
-      alert(`保存域名配置失败: ${err.message || err}`);
+      alert(`保存域名配置失败: ${errorMessage}`);
     } finally {
-      setIsDomainConfigLoading(false);
+      updateLoadingState({ domainConfig: false });
     }
-  };
+  }, [loading.domainConfig, appState.customDomain, appState.useCustomDomain, updateLoadingState]);
 
-  // 检查更新
-  const checkForUpdates = async () => {
-    if (isCheckingUpdate) return;
+  const checkForUpdates = useCallback(async () => {
+    if (loading.update) return;
 
-    setIsCheckingUpdate(true);
+    updateLoadingState({ update: true });
+
     try {
-      // 这里可以调用后端命令检查更新
-      // 暂时模拟检查过程
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, UPDATE_CHECK_DELAY_MS));
       alert("当前已是最新版本");
     } catch (err) {
       console.error("Failed to check updates:", err);
       alert("检查更新失败，请检查网络连接");
     } finally {
-      setIsCheckingUpdate(false);
+      updateLoadingState({ update: false });
     }
-  };
+  }, [loading.update, updateLoadingState]);
 
-  // 切换节点解禁开关
-  const toggleNodeUnblock = async (enabled: boolean) => {
+  const toggleNodeUnblock = useCallback(async (enabled: boolean) => {
     try {
+      updateAppState({ nodeUnblockEnabled: enabled });
+      updateLoadingState({ nodeUnblock: true });
 
-      // 乐观更新：立即更新UI
-      setNodeUnblockEnabled(enabled);
-      setIsNodeUnblockLoading(true);
-
-      console.log(`[DEBUG] 调用后端命令 set_nodes_unlocked(${enabled})`);
-      // 调用后端命令来实际启用/禁用节点解禁
       await invoke("set_nodes_unlocked", { enabled });
-      console.log(`[DEBUG] 节点解禁已${enabled ? '启用' : '禁用'}`);
-    } catch (err: any) {
-      console.error("[DEBUG] Failed to set node unblock:", err);
-      // 回滚状态
-      setNodeUnblockEnabled(!enabled);
-      alert(`设置节点解禁状态失败: ${err.message || err}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("Failed to set node unblock:", err);
+      updateAppState({ nodeUnblockEnabled: !enabled });
+      alert(`设置节点解禁状态失败: ${errorMessage}`);
     } finally {
-      console.log("[DEBUG] 清除加载状态");
-      setIsNodeUnblockLoading(false);
+      updateLoadingState({ nodeUnblock: false });
     }
-  };
+  }, [updateAppState, updateLoadingState]);
 
+  const handleToggleSidebar = useCallback(async () => {
+    onToggleSidebar?.();
 
-  // 初始化
+    try {
+      await invoke("toggle_sidebar");
+    } catch (err) {
+      console.error("Failed to toggle sidebar via backend:", err);
+    }
+  }, [onToggleSidebar]);
+
+  // ========== 事件处理函数 ==========
+  const handleTunnelUpdate = useCallback((event: Event<TunnelEventPayload>) => {
+    const { status, url } = event.payload;
+    const tunnelStatus = status.toLowerCase() as TunnelStatus;
+
+    const updates: Partial<AppState> = {
+      tunnelStatus,
+      tunnelUrl: url || appState.tunnelUrl,
+    };
+
+    if (tunnelStatus === "online" || tunnelStatus === "offline" || tunnelStatus === "error") {
+      updateLoadingState({ tunnel: false });
+    }
+
+    updateAppState(updates);
+  }, [appState.tunnelUrl, updateAppState, updateLoadingState]);
+
+  // ========== 副作用 ==========
   useEffect(() => {
     let unlistenTunnelUpdate: UnlistenFn | null = null;
 
     const setupListeners = async () => {
       try {
-        // 监听隧道状态更新
-        unlistenTunnelUpdate = await listen("tunnel-update", (event: any) => {
-          const { status, url } = event.payload;
-          const tunnelStatus = status.toLowerCase() as TunnelStatus;
-          setTunnelStatus(tunnelStatus);
-          if (url) {
-            setTunnelUrl(url);
-          }
+        unlistenTunnelUpdate = await listen<TunnelEventPayload>("tunnel-event", handleTunnelUpdate);
 
-          // 更新加载状态
-          if (tunnelStatus === "online" || tunnelStatus === "offline" || tunnelStatus === "error") {
-            setIsTunnelLoading(false);
-          }
-        });
-
-        // 加载应用信息
         await loadAppInfo();
         await checkN8nStatus();
 
-        // 加载节点解禁状态
         try {
           const unlocked = await invoke<boolean>("get_nodes_unlocked");
-          setNodeUnblockEnabled(unlocked);
+          updateAppState({ nodeUnblockEnabled: unlocked });
         } catch (err) {
           console.error("Failed to load node unblock status:", err);
         }
@@ -273,82 +322,287 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     setupListeners();
 
     return () => {
-      if (unlistenTunnelUpdate) unlistenTunnelUpdate();
+      unlistenTunnelUpdate?.();
     };
-  }, []);
+  }, [loadAppInfo, checkN8nStatus, handleTunnelUpdate, updateAppState]);
 
-  // n8n 状态显示文本
-  const getN8nStatusText = () => {
-    switch (n8nStatus) {
-      case "running": return "运行中";
-      case "stopped": return "已停止";
-      case "starting": return "启动中";
-      default: return "未知";
-    }
-  };
+  // ========== 渲染函数 ==========
+  const renderCollapsedSidebar = () => (
+    <div className={`sidebar-panel collapsed ${className}`}>
+      <div className="sidebar-header-collapsed">
+        <button
+          onClick={handleToggleSidebar}
+          className="sidebar-toggle-btn-modern"
+          title="展开侧边栏"
+        >
+          <svg className="panel-left-open-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
 
-  // n8n 状态颜色
-  const getN8nStatusColor = () => {
-    switch (n8nStatus) {
-      case "running": return "text-green-600";
-      case "stopped": return "text-red-600";
-      case "starting": return "text-yellow-600";
-      default: return "text-gray-600";
-    }
-  };
+  const renderWarningBox = () => (
+    <div className="mt-3 p-3 rounded-lg border border-gray-200 bg-gray-50 flex items-start gap-2 shadow-sm">
+      <span className="text-lg mt-[-1px] text-red-600">⚠️</span>
+      <div className="flex flex-col gap-1">
+        <strong className="text-sm font-bold text-gray-900">
+          风险提示
+        </strong>
+        <p className="text-xs leading-relaxed m-0 text-red-600">
+          解除禁用节点可能存在风险。启用此功能可能会允许执行潜在不安全的节点操作（如执行系统命令等），请谨慎使用。
+        </p>
+      </div>
+    </div>
+  );
 
-  // 隧道状态显示文本
-  const getTunnelStatusText = () => {
-    switch (tunnelStatus) {
-      case "offline": return "隧道已关闭";
-      case "connecting": return "隧道连接中...";
-      case "online": return "隧道已连接";
-      case "error": return "隧道错误";
-      default: return "未知状态";
-    }
-  };
+  const renderServiceStatusCard = () => {
+    const { text: n8nText, color: n8nColor } = getN8nStatusDisplay(appState.n8nStatus);
 
-  // 隧道状态颜色
-  const getTunnelStatusColor = () => {
-    switch (tunnelStatus) {
-      case "online": return "text-green-600";
-      case "connecting": return "text-yellow-600";
-      case "error": return "text-red-600";
-      default: return "text-gray-600";
-    }
-  };
-
-  // 处理侧边栏切换
-  const handleToggleSidebar = async () => {
-    if (onToggleSidebar) {
-      onToggleSidebar();
-    }
-    // 调用后端命令同步布局
-    try {
-      await invoke("toggle_sidebar");
-    } catch (err) {
-      console.error("Failed to toggle sidebar via backend:", err);
-    }
-  };
-
-  // 如果侧边栏折叠，只显示切换按钮
-  if (collapsed) {
     return (
-      <div className={`sidebar-panel collapsed ${className}`}>
-        <div className="sidebar-header-collapsed">
-          <button
-            onClick={handleToggleSidebar}
-            className="sidebar-toggle-btn-modern"
-            title="展开侧边栏"
-          >
-            <svg className="panel-left-open-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="9" y1="3" x2="9" y2="21"></line>
-            </svg>
-          </button>
+      <div className="service-card">
+
+        <div className="service-details">
+          {/* n8n 服务状态 */}
+          <div className="service-item">
+            <div className="service-item-header">
+              <span className="item-label">n8n 服务</span>
+              <span className={`service-status ${n8nColor}`}>
+                {n8nText}
+              </span>
+            </div>
+            <div className="service-address">
+              <span className="address-label">本地地址:</span>
+              <span className="address-value">{N8N_LOCAL_ADDRESS}</span>
+            </div>
+          </div>
+
+          {/* 分隔线 */}
+          <div style={{ margin: '12px 0', borderTop: '1px solid #e5e7eb' }} />
+
+          {/* 节点解禁 */}
+          <div className="service-item">
+            <div className="service-item-header">
+              <span className="item-label">节点解禁</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="service-status text-yellow-600">
+                  {appState.nodeUnblockEnabled ? "已启用" : "已禁用"}
+                </span>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={appState.nodeUnblockEnabled}
+                    onChange={(e) => toggleNodeUnblock(e.target.checked)}
+                    disabled={loading.nodeUnblock}
+                  />
+                  <span className="slider"></span>
+                </label>
+              </div>
+            </div>
+            {renderWarningBox()}
+          </div>
         </div>
       </div>
     );
+  };
+
+  const renderTunnelCard = () => {
+    const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
+    const isTunnelActive = appState.tunnelStatus === "online" || appState.tunnelStatus === "connecting";
+
+    return (
+      <div className="service-card">
+        <div className="service-header">
+          <div className="service-info">
+            <h4 className="service-name">Cloudflare 隧道</h4>
+            <span className={`service-status ${color}`}>
+              {text}
+            </span>
+          </div>
+          <div className="service-switch">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={isTunnelActive}
+                onChange={(e) => e.target.checked ? startTunnel() : stopTunnel()}
+                disabled={loading.tunnel}
+              />
+              <span className="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        {appState.tunnelStatus === "online" && appState.tunnelUrl && (
+          <div className="tunnel-url-section">
+            <div className="tunnel-url-label">公网地址:</div>
+            <div className="tunnel-url-value">
+              <a
+                href={appState.tunnelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tunnel-link"
+              >
+                {appState.tunnelUrl.replace('https://', '')}
+              </a>
+            </div>
+            <button
+              onClick={() => {
+                console.log("[SidebarPanel] 用户点击刷新 n8n UI");
+                onTunnelOnline?.();
+              }}
+              style={{
+                marginTop: '8px',
+                padding: '6px 12px',
+                backgroundColor: '#4CAF50',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                width: '100%',
+                fontFamily: 'inherit'
+              }}
+            >
+              刷新 n8n UI
+            </button>
+          </div>
+        )}
+
+        {cloudflaredInfo && (
+          <div className="cloudflared-info">
+            <span className="info-label">cloudflared:</span>
+            <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
+              {cloudflaredInfo.installed
+                ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
+                : "未安装 (点击隧道开关将自动下载)"}
+            </span>
+          </div>
+        )}
+
+        {renderCustomDomainSection()}
+      </div>
+    );
+  };
+
+  const renderCustomDomainSection = () => (
+    <div className="custom-domain-section mt-4 pt-4 border-t border-gray-200">
+      <div className="service-header">
+        <div className="service-info">
+          <h4 className="service-name text-sm">自定义域名</h4>
+          <span className="service-status text-blue-600 text-sm">
+            {appState.useCustomDomain ? "已启用" : "已禁用"}
+          </span>
+        </div>
+        <div className="service-switch">
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={appState.useCustomDomain}
+              onChange={(e) => updateAppState({ useCustomDomain: e.target.checked })}
+              disabled={loading.domainConfig}
+            />
+            <span className="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      {appState.useCustomDomain && (
+        <div className="mt-3">
+          <div className="mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              自定义域名
+            </label>
+            <input
+              type="text"
+              value={appState.customDomain}
+              onChange={(e) => updateAppState({ customDomain: e.target.value })}
+              placeholder="https://your-domain.com"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={loading.domainConfig}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              请输入完整的域名，包含 http:// 或 https://
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4">
+        <button
+          onClick={saveCustomDomainConfig}
+          disabled={loading.domainConfig || (appState.useCustomDomain && !appState.customDomain.trim())}
+          className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading.domainConfig ? (
+            <>
+              <svg className="spinner inline mr-2" width="16" height="16" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              </svg>
+              保存域名配置
+            </>
+          ) : "保存域名配置"}
+        </button>
+        <p className="text-xs text-gray-500 mt-2">
+          保存后会自动重启 n8n 以应用新的域名配置
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderAppInfoSection = () => (
+    <div className="app-info-section">
+      <h3 className="section-title">应用信息</h3>
+
+      <div className="app-info-card">
+        <div className="version-info">
+          <div className="version-label">当前版本</div>
+          <div className="version-value">v{appVersion}</div>
+        </div>
+
+        <button
+          onClick={checkForUpdates}
+          disabled={loading.update}
+          className="check-update-btn"
+        >
+          {loading.update ? (
+            <>
+              <svg className="spinner" width="16" height="16" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              </svg>
+              检查中...
+            </>
+          ) : "检查更新"}
+        </button>
+      </div>
+
+      <div className="app-links">
+        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("文档功能开发中"); }}>
+          查看文档
+        </a>
+        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("问题反馈功能开发中"); }}>
+          报告问题
+        </a>
+        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("日志目录功能开发中"); }}>
+          打开日志目录
+        </a>
+      </div>
+    </div>
+  );
+
+  const renderFooter = () => (
+    <div className="sidebar-footer-minimal">
+      <div className="footer-status">
+        <div className={`status-dot ${appState.n8nStatus === "running" ? "running" : "stopped"}`} />
+        <span className="status-text">n8n {getN8nStatusDisplay(appState.n8nStatus).text}</span>
+      </div>
+    </div>
+  );
+
+  // ========== 主渲染逻辑 ==========
+  if (collapsed) {
+    return renderCollapsedSidebar();
   }
 
   return (
@@ -375,263 +629,17 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="sidebar-content-single">
         {/* 服务控制区域 */}
         <div className="service-control-section">
-          <h3 className="section-title">服务控制</h3>
-
-          {/* n8n 服务状态 */}
-          <div className="service-card">
-            <div className="service-header">
-              <div className="service-info">
-                <h4 className="service-name">n8n 服务</h4>
-                <span className={`service-status ${getN8nStatusColor()}`}>
-                  {getN8nStatusText()}
-                </span>
-              </div>
-
-            </div>
-            <div className="service-details">
-              <div className="service-address">
-                <span className="address-label">本地地址:</span>
-                <span className="address-value">http://localhost:5678</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 节点解禁控制 */}
-          <div className="service-card">
-            <div className="service-header">
-              <div className="service-info">
-                <h4 className="service-name">节点解禁</h4>
-                <span className="service-status text-yellow-600">
-                  {nodeUnblockEnabled ? "已启用" : "已禁用"}
-                </span>
-              </div>
-              <div className="service-switch">
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={nodeUnblockEnabled}
-                    onChange={(e) => {
-
-                      const newValue = e.target.checked; // 计算新值
-                      toggleNodeUnblock(newValue);
-                    }}
-                    disabled={isNodeUnblockLoading}
-                  />
-                  <span className="slider"></span>
-                </label>
-              </div>
-            </div>
-
-            <div className="service-details">
-              <div
-                className="mt-3 p-3 rounded-lg border flex items-start gap-2"
-                style={{
-                  backgroundColor: '#fff7ed', // 极浅的橘黄色背景，警告感更好
-                  borderColor: '#ffedd5',     // 浅橘色边框
-                  boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)'
-                }}
-              >
-                {/* 这里的图标单独控制颜色 */}
-                <span style={{ fontSize: '16px', marginTop: '-1px' }}>⚠️</span>
-
-                <div className="flex flex-col gap-1">
-                  <strong
-                    style={{
-                      color: '#9a3412', // 深橘红色
-                      fontSize: '13px',
-                      fontWeight: '700'
-                    }}
-                  >
-                    风险提示
-                  </strong>
-                  <p
-                    style={{
-                      color: '#c2410c', // 标准警告橘红
-                      fontSize: '12px',
-                      lineHeight: '1.5',
-                      margin: 0
-                    }}
-                  >
-                    解除禁用节点可能存在风险。启用此功能可能会允许执行潜在不安全的节点操作（如执行系统命令等），请谨慎使用。
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Cloudflare 隧道与自定义域名配置（合并为一个卡片） */}
-          <div className="service-card">
-            <div className="service-header">
-              <div className="service-info">
-                <h4 className="service-name">Cloudflare 隧道</h4>
-                <span className={`service-status ${getTunnelStatusColor()}`}>
-                  {getTunnelStatusText()}
-                </span>
-              </div>
-              <div className="service-switch">
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={tunnelStatus === "online" || tunnelStatus === "connecting"}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        startTunnel();
-                      } else {
-                        stopTunnel();
-                      }
-                    }}
-                    disabled={isTunnelLoading}
-                  />
-                  <span className="slider"></span>
-                </label>
-              </div>
-            </div>
-
-            {/* 隧道URL显示 */}
-            {tunnelStatus === "online" && tunnelUrl && (
-              <div className="tunnel-url-section">
-                <div className="tunnel-url-label">公网地址:</div>
-                <div className="tunnel-url-value">
-                  <a
-                    href={tunnelUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="tunnel-link"
-                  >
-                    {tunnelUrl.replace('https://', '')}
-                  </a>
-                </div>
-              </div>
-            )}
-
-            {/* cloudflared 信息 */}
-            {cloudflaredInfo && (
-              <div className="cloudflared-info">
-                <span className="info-label">cloudflared:</span>
-                <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
-                  {cloudflaredInfo.installed
-                    ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
-                    : "未安装 (点击隧道开关将自动下载)"}
-                </span>
-              </div>
-            )}
-
-            {/* 自定义域名配置部分 */}
-            <div className="custom-domain-section mt-4 pt-4 border-t border-gray-200">
-              <div className="service-header">
-                <div className="service-info">
-                  <h4 className="service-name text-sm">自定义域名</h4>
-                  <span className="service-status text-blue-600 text-sm">
-                    {useCustomDomain ? "已启用" : "已禁用"}
-                  </span>
-                </div>
-                <div className="service-switch">
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      checked={useCustomDomain}
-                      onChange={(e) => {
-                        setUseCustomDomain(e.target.checked);
-                      }}
-                      disabled={isDomainConfigLoading}
-                    />
-                    <span className="slider"></span>
-                  </label>
-                </div>
-              </div>
-
-              {useCustomDomain && (
-                <div className="mt-3">
-                  <div className="mb-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      自定义域名
-                    </label>
-                    <input
-                      type="text"
-                      value={customDomain}
-                      onChange={(e) => setCustomDomain(e.target.value)}
-                      placeholder="https://your-domain.com"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      disabled={isDomainConfigLoading}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      请输入完整的域名，包含 http:// 或 https://
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-4">
-                <button
-                  onClick={saveCustomDomainConfig}
-                  disabled={isDomainConfigLoading || (useCustomDomain && !customDomain.trim())}
-                  className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isDomainConfigLoading ? (
-                    <>
-                      <svg className="spinner inline mr-2" width="16" height="16" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      </svg>
-                      保存域名配置
-                    </>
-                  ) : "保存域名配置"}
-                </button>
-                <p className="text-xs text-gray-500 mt-2">
-                  保存后会自动重启 n8n 以应用新的域名配置
-                </p>
-              </div>
-            </div>
-          </div>
-
+          <h3 className="section-title">服务配置</h3>
+          {renderServiceStatusCard()}
+          {renderTunnelCard()}
         </div>
 
         {/* 应用设置 & 关于区域 */}
-        <div className="app-info-section">
-          <h3 className="section-title">应用信息</h3>
-
-          <div className="app-info-card">
-            <div className="version-info">
-              <div className="version-label">当前版本</div>
-              <div className="version-value">v{appVersion}</div>
-            </div>
-
-            <button
-              onClick={checkForUpdates}
-              disabled={isCheckingUpdate}
-              className="check-update-btn"
-            >
-              {isCheckingUpdate ? (
-                <>
-                  <svg className="spinner" width="16" height="16" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  </svg>
-                  检查中...
-                </>
-              ) : "检查更新"}
-            </button>
-          </div>
-
-          <div className="app-links">
-            <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("文档功能开发中"); }}>
-              查看文档
-            </a>
-            <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("问题反馈功能开发中"); }}>
-              报告问题
-            </a>
-            <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("日志目录功能开发中"); }}>
-              打开日志目录
-            </a>
-          </div>
-        </div>
+        {renderAppInfoSection()}
       </div>
 
       {/* 底部状态栏 */}
-      <div className="sidebar-footer-minimal">
-        <div className="footer-status">
-          <div className={`status-dot ${n8nStatus === "running" ? "running" : "stopped"}`} />
-          <span className="status-text">n8n {getN8nStatusText()}</span>
-        </div>
-      </div>
+      {renderFooter()}
     </div>
   );
 }

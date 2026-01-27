@@ -924,6 +924,26 @@ body {
 
 .service-details {
   margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.service-item {
+  padding: 8px 0;
+}
+
+.service-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.item-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
 }
 
 .service-address {
