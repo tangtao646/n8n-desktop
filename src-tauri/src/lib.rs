@@ -30,6 +30,7 @@ pub fn run() {
             api::commands::check_tunnel_health,
             api::commands::recover_tunnel,
             api::commands::get_tunnel_errors,
+            api::commands::apply_tunnel_config,
             api::commands::apply_custom_domain_config,
             // cloudflared 管理
             api::commands::download_cloudflared,
