@@ -1,7 +1,9 @@
 use chrono;
+use dirs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_yaml;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -19,6 +21,15 @@ pub struct TunnelEvent {
     pub url: Option<String>,
     pub progress: Option<f64>,
     pub message: Option<String>,
+}
+
+/// 隧道模式枚举
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum TunnelMode {
+    /// 临时隧道模式，每次启动生成随机URL
+    Temporary,
+    /// Token 模式，使用 Cloudflare Tunnel Token 和自定义域名
+    Token { token: String, domain: String },
 }
 
 impl TunnelEvent {
@@ -63,7 +74,7 @@ pub struct TunnelConfig {
     pub created_at: String,
     pub custom_domain: Option<String>,
     pub use_custom_domain: bool,
-    pub tunnel_mode: String, // "temporary" | "custom-domain" | "token"
+    pub tunnel_mode: TunnelMode, // 使用枚举替代字符串
     pub tunnel_token: Option<String>,
 }
 
@@ -75,7 +86,7 @@ impl Default for TunnelConfig {
             created_at: chrono::Local::now().to_rfc3339(),
             custom_domain: None,
             use_custom_domain: false,
-            tunnel_mode: "temporary".to_string(),
+            tunnel_mode: TunnelMode::Temporary,
             tunnel_token: None,
         }
     }
@@ -114,6 +125,15 @@ pub(crate) static TUNNEL_CONFIG: Lazy<Arc<Mutex<TunnelConfig>>> =
 
 // --- 3. 内部辅助函数 ---
 
+/// 从 cloudflared 输出中提取隧道 ID
+fn extract_tunnel_id_from_output(output: &str) -> Option<String> {
+    // 正则匹配隧道 ID 格式：类似 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx 或短 ID
+    let re =
+        Regex::new(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}|[a-z0-9]{32}")
+            .unwrap();
+    re.find(output).map(|m| m.as_str().to_string())
+}
+
 /// 核心修复：处理隧道URL匹配逻辑
 fn process_tunnel_url_match<R: Runtime>(
     url_match: &regex::Match,
@@ -121,7 +141,11 @@ fn process_tunnel_url_match<R: Runtime>(
     app_clone: &AppHandle<R>,
 ) -> bool {
     let url = url_match.as_str().to_string();
+    handle_tunnel_url(&url, is_temporary, app_clone)
+}
 
+/// 处理隧道URL（直接传入URL字符串，不依赖正则匹配）
+fn handle_tunnel_url<R: Runtime>(url: &str, is_temporary: bool, app_clone: &AppHandle<R>) -> bool {
     // 【修复点】：移除对 "cloudflare.com" 的排除逻辑，只验证后缀
     let is_valid_url = if is_temporary {
         url.ends_with(".trycloudflare.com")
@@ -138,14 +162,17 @@ fn process_tunnel_url_match<R: Runtime>(
 
     {
         let mut url_guard = TUNNEL_URL.lock().unwrap();
-        *url_guard = Some(url.clone());
+        *url_guard = Some(url.to_string());
     }
 
-    let _ = update_last_url(app_clone, &url);
+    let _ = update_last_url(app_clone, url);
     // 【修复点】：状态统一为小写，确保前端匹配
-    let _ = app_clone.emit("tunnel-event", TunnelEvent::with_url("online", url.clone()));
+    let _ = app_clone.emit(
+        "tunnel-event",
+        TunnelEvent::with_url("online", url.to_string()),
+    );
 
-    restart_n8n_with_env(app_clone, &url);
+    restart_n8n_with_env(app_clone, url);
     true
 }
 
@@ -222,6 +249,8 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
         }
 
         let mut envs = construct_n8n_envs();
+        envs.insert("N8N_HOST".to_string(), "127.0.0.1".to_string()); // 强制监听 IPv4
+        envs.insert("N8N_PORT".to_string(), "5678".to_string());
         envs.insert("WEBHOOK_URL".to_string(), url.to_string());
         envs.insert("N8N_EDITOR_BASE_URL".to_string(), url.to_string());
 
@@ -231,7 +260,7 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
                 println!("[Tunnel] ✓ n8n 重启成功");
                 println!("[Tunnel] ✓ 新的 WEBHOOK_URL: {}", url);
                 println!("[Tunnel] ⚠️  请重新登录 n8n 以刷新 webhook 地址");
-            },
+            }
             Err(e) => println!("[Tunnel] ✗ 启动失败: {}", e),
         }
     }
@@ -243,7 +272,7 @@ pub async fn start_tunnel<R: Runtime>(
     app: AppHandle<R>,
     cloudflared_path: String,
 ) -> Result<(), String> {
-    // 清理残留
+    // 1. 物理清理残留进程
     #[cfg(unix)]
     let _ = Command::new("pkill").args(&["-f", "cloudflared"]).output();
     #[cfg(windows)]
@@ -255,34 +284,23 @@ pub async fn start_tunnel<R: Runtime>(
     app.emit("tunnel-event", TunnelEvent::new("connecting"))
         .ok();
 
-    let (tunnel_mode, custom_domain, tunnel_token) = {
-        let cfg = TUNNEL_CONFIG.lock().unwrap();
-        (cfg.tunnel_mode.clone(), cfg.custom_domain.clone(), cfg.tunnel_token.clone())
-    };
+    // 2. 获取当前配置模式
+    let cfg = TUNNEL_CONFIG.lock().unwrap().clone();
+    let tunnel_mode = cfg.tunnel_mode;
 
-    let mut child = match tunnel_mode.as_str() {
-        "custom-domain" => {
-            // 自定义域名模式：需要在 Cloudflare 中创建的隧道 ID
-            let domain = custom_domain.unwrap_or_else(|| "n8n-tunnel".into());
+    // 3. 根据模式构造不同的启动命令
+    let mut child = match &tunnel_mode {
+        TunnelMode::Token { token, .. } => {
+            println!("[Tunnel] 启动 Token 模式：跳过本地配置，连接云端端点...");
             Command::new(&cloudflared_path)
-                .args(&["tunnel", "run", &domain, "--no-autoupdate"])
+                .args(&["tunnel", "run", "--token", token]) // 关键：Token 模式严禁带 --url
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| e.to_string())?
         }
-        "token" => {
-            // Token 模式：使用 Cloudflare Tunnel Token 建立固定隧道
-            let token = tunnel_token.ok_or("Tunnel token not provided")?;
-            Command::new(&cloudflared_path)
-                .args(&["tunnel", "run", "--token", &token])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| e.to_string())?
-        }
-        _ => {
-            // 临时隧道模式（默认）：每次启动生成随机 URL
+        TunnelMode::Temporary => {
+            println!("[Tunnel] 启动临时模式：准备捕获随机域名...");
             Command::new(&cloudflared_path)
                 .args(&[
                     "tunnel",
@@ -298,40 +316,74 @@ pub async fn start_tunnel<R: Runtime>(
     };
 
     *TUNNEL_RUNNING.lock().unwrap() = true;
-    let stderr = child.stderr.take().ok_or("Cannot capture stderr")?;
+    let stderr = child.stderr.take().ok_or("无法捕获标准错误流")?;
     let app_clone = app.clone();
 
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        // 【修复点】：精准正则
-        let regex_temp = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com").unwrap();
-        let mut found_url = false;
-
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                println!("Cloudflared: {}", l);
-                if !found_url {
-                    // 【修复点】：使用 find 排除边框
-                    if let Some(mat) = regex_temp.find(&l) {
-                      
-                        found_url = process_tunnel_url_match(&mat, true, &app_clone);
+    // 4. 分轨处理逻辑
+    match tunnel_mode {
+        TunnelMode::Token { domain, .. } => {
+            // Token 模式：不解析日志，直接信任用户输入的域名
+            let app_inner = app_clone.clone();
+            // 对于 Token 模式，我们不需要读取 stderr 来获取 URL，但应该读取它以检测错误
+            // 所以 spawn 一个线程来读取 stderr（仅用于错误检测）
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    if let Ok(l) = line {
+                        // 可以在这里检测错误日志，但暂时只打印
+                        if l.contains("error") || l.contains("Error") || l.contains("ERROR") {
+                            println!("[Tunnel] Cloudflared 错误: {}", l);
+                        }
                     }
                 }
-            }
+            });
+
+            // 另一个线程处理 URL 设置和 n8n 重启
+            std::thread::spawn(move || {
+                // 给予 cloudflared 一定的连接握手时间
+                std::thread::sleep(Duration::from_secs(2));
+
+                // 格式化域名：确保以 https:// 开头
+                let final_url = if domain.starts_with("http") {
+                    domain
+                } else {
+                    format!("https://{}", domain)
+                };
+
+                println!("[Tunnel] Token 模式上线，应用域名: {}", final_url);
+
+                // 使用 handle_tunnel_url 处理 URL（包含验证、更新状态、保存配置、重启 n8n）
+                // is_temporary = false 表示这是 Token 模式（非临时域名）
+                handle_tunnel_url(&final_url, false, &app_inner);
+            });
         }
-        *TUNNEL_RUNNING.lock().unwrap() = false;
-        *TUNNEL_URL.lock().unwrap() = None;
-        app_clone
-            .emit("tunnel-event", TunnelEvent::new("offline"))
-            .ok();
-    });
+        TunnelMode::Temporary => {
+            // 临时模式：继续保持正则抓取逻辑
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                let regex_temp = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com").unwrap();
+                let mut found_url = false;
+
+                for line in reader.lines() {
+                    if let Ok(l) = line {
+                        // println!("Cloudflared: {}", l); // 调试时可开启
+                        if !found_url {
+                            if let Some(mat) = regex_temp.find(&l) {
+                                found_url = process_tunnel_url_match(&mat, true, &app_clone);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
 
     Ok(())
 }
 
 pub async fn stop_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     println!("[Tunnel] 正在停止隧道...");
-    
+
     #[cfg(unix)]
     let _ = Command::new("pkill").args(&["-f", "cloudflared"]).output();
     #[cfg(windows)]
@@ -341,7 +393,7 @@ pub async fn stop_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
     *TUNNEL_URL.lock().unwrap() = None;
     *TUNNEL_RUNNING.lock().unwrap() = false;
-    
+
     println!("[Tunnel] 隧道已停止，清理缓存");
     app.emit("tunnel-event", TunnelEvent::new("offline")).ok();
     Ok(())
@@ -447,38 +499,34 @@ pub async fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
 
 pub async fn apply_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
-    tunnel_mode: &str,
+    tunnel_mode: TunnelMode,
     custom_domain: Option<String>,
     tunnel_token: Option<String>,
 ) -> Result<(), String> {
     // 验证输入
-    match tunnel_mode {
-        "custom-domain" => {
-            if custom_domain.is_none() || custom_domain.as_ref().map(|d| d.trim().is_empty()).unwrap_or(true) {
-                return Err("Custom domain cannot be empty".into());
+    match &tunnel_mode {
+        TunnelMode::Token { token, domain } => {
+            if token.trim().is_empty() {
+                return Err("Token 模式需要提供 Cloudflare Tunnel Token".into());
+            }
+            if domain.trim().is_empty() {
+                return Err("Token 模式需要提供自定义域名".into());
             }
         }
-        "token" => {
-            if tunnel_token.is_none() || tunnel_token.as_ref().map(|t| t.trim().len() < 50).unwrap_or(true) {
-                return Err("Invalid tunnel token".into());
-            }
-        }
-        "temporary" => {
+        TunnelMode::Temporary => {
             // 临时隧道模式无需验证
         }
-        _ => return Err(format!("Unknown tunnel mode: {}", tunnel_mode)),
     }
 
     // 更新配置
     {
         let mut cfg = TUNNEL_CONFIG.lock().unwrap();
-        cfg.tunnel_mode = tunnel_mode.to_string();
-        if let Some(domain) = custom_domain {
-            cfg.custom_domain = Some(domain);
+        cfg.tunnel_mode = tunnel_mode;
+        // 对于 Token 模式，需要更新 custom_domain 字段
+        if let TunnelMode::Token { domain, .. } = &cfg.tunnel_mode {
+            cfg.custom_domain = Some(domain.clone());
         }
-        if let Some(token) = tunnel_token {
-            cfg.tunnel_token = Some(token);
-        }
+        // tunnel_token 字段现在在 TunnelMode::Token 中，不需要单独存储
     }
 
     save_tunnel_config(&app)?;
@@ -492,19 +540,10 @@ pub async fn apply_tunnel_config<R: Runtime>(
     Ok(())
 }
 
-pub async fn apply_custom_domain_config<R: Runtime>(
-    app: AppHandle<R>,
-    custom_domain: Option<String>,
-    use_custom_domain: bool,
-) -> Result<(), String> {
-    // 旧版本的兼容函数，自动转换为新的 tunnel_mode
-    let tunnel_mode = if use_custom_domain { "custom-domain" } else { "temporary" };
-    apply_tunnel_config(app, tunnel_mode, custom_domain, None).await
-}
-
 pub async fn get_tunnel_errors<R: Runtime>(_app: AppHandle<R>) -> Result<Vec<TunnelError>, String> {
     Ok(vec![])
 }
+
 pub async fn load_tunnel_config_on_start<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     load_tunnel_config(&app)
 }

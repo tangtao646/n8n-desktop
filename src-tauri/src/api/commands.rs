@@ -137,7 +137,7 @@ pub async fn get_nodes_unlocked() -> Result<bool, String> {
     n8n_core::get_nodes_unlocked().await
 }
 
-/// 应用新的隧道配置（支持三种模式）
+/// 应用新的隧道配置（支持两种模式）
 #[tauri::command]
 pub async fn apply_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
@@ -145,24 +145,30 @@ pub async fn apply_tunnel_config<R: Runtime>(
     custom_domain: Option<String>,
     tunnel_token: Option<String>,
 ) -> Result<(), String> {
+    // 将字符串转换为 TunnelMode 枚举
+    let mode = match tunnel_mode.as_str() {
+        "temporary" => tunnel::TunnelMode::Temporary,
+        "token" => {
+            // 对于 Token 模式，需要 token 和 domain
+            let token = tunnel_token.ok_or("Token 模式需要提供 Cloudflare Tunnel Token")?;
+            let domain = custom_domain.clone().ok_or("Token 模式需要提供自定义域名")?;
+            tunnel::TunnelMode::Token {
+                token,
+                domain,
+            }
+        }
+        _ => return Err(format!("未知的隧道模式: {}", tunnel_mode)),
+    };
+    
     tunnel::apply_tunnel_config(
         app,
-        &tunnel_mode,
+        mode,
         custom_domain,
-        tunnel_token,
+        None, // tunnel_token 现在包含在 TunnelMode::Token 中
     )
     .await
 }
 
-/// 应用自定义域名配置并重启 n8n（保留以向后兼容）
-#[tauri::command]
-pub async fn apply_custom_domain_config<R: Runtime>(
-    app: AppHandle<R>,
-    custom_domain: Option<String>,
-    use_custom_domain: bool,
-) -> Result<(), String> {
-    tunnel::apply_custom_domain_config(app, custom_domain, use_custom_domain).await
-}
 
 /// 切换侧边栏状态
 #[tauri::command]

@@ -1281,3 +1281,187 @@ input:disabled + .slider {
   gap: 12px;
   justify-content: center;
 }
+
+/* ========== 隧道向导样式 ========== */
+.tunnel-wizard-step {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.wizard-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.step-number {
+  width: 24px;
+  height: 24px;
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.wizard-step-content {
+  padding-left: 32px;
+}
+
+.step-description {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.wizard-primary-btn {
+  width: 100%;
+  padding: 10px 16px;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.wizard-primary-btn:hover:not(:disabled) {
+  background-color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.wizard-primary-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.auth-polling-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background-color: #f0f9ff;
+  border-radius: 6px;
+  border: 1px solid #bae6fd;
+}
+
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.polling-text {
+  font-size: 12px;
+  color: #0369a1;
+}
+
+.loading-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.spinner-large {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+.loading-text {
+  font-size: 14px;
+  color: #334155;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.loading-subtext {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.wizard-actions {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 自定义域名配置区域调整 */
+.custom-domain-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.custom-domain-section .service-name {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.tunnel-mode-selector {
+  margin-bottom: 16px;
+}
+
+.tunnel-mode-selector .flex {
+  display: flex;
+  gap: 8px;
+}
+
+.tunnel-mode-selector button {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background-color: #f1f5f9;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.tunnel-mode-selector button:hover {
+  background-color: #e2e8f0;
+}
+
+.tunnel-mode-selector button[style*="background-color: #3b82f6"] {
+  background-color: #3b82f6 !important;
+  color: white !important;
+  border-color: #2563eb !important;
+}
+
+.tunnel-mode-selector p {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 4px;
+  line-height: 1.4;
+}

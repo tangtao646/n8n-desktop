@@ -14,6 +14,9 @@ const DEFAULT_APP_VERSION = "1.0.2";
 type TunnelStatus = "offline" | "connecting" | "online" | "error";
 type N8nStatus = "running" | "stopped" | "starting";
 
+// 隧道状态机
+type TunnelState = "UNAUTHORIZED" | "READY" | "STARTING" | "RUNNING";
+
 interface TunnelEventPayload {
   status: string;
   url?: string;
@@ -32,7 +35,7 @@ interface CloudflaredVersionInfo {
 interface TunnelConfig {
   custom_domain?: string;
   use_custom_domain?: boolean;
-  tunnel_mode?: "temporary" | "custom-domain" | "token";
+  tunnel_mode?: "temporary" | "token";
   tunnel_token?: string;
   [key: string]: unknown;
 }
@@ -56,10 +59,10 @@ type AppState = {
   tunnelUrl: string;
   n8nStatus: N8nStatus;
   nodeUnblockEnabled: boolean;
-  customDomain: string;
-  useCustomDomain: boolean;
-  tunnelMode: "temporary" | "custom-domain" | "token"; // 隧道模式
+  tunnelDomain: string; // Domain for Token mode
+  tunnelMode: "temporary" | "token"; // 隧道模式
   tunnelToken: string; // Cloudflare Tunnel Token
+  tunnelState: TunnelState; // 隧道状态机
 };
 
 // ========== 状态映射 ==========
@@ -84,10 +87,10 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     tunnelUrl: "",
     n8nStatus: "running",
     nodeUnblockEnabled: false,
-    customDomain: "",
-    useCustomDomain: false,
+    tunnelDomain: "",
     tunnelMode: "temporary",
     tunnelToken: "",
+    tunnelState: "READY", // 初始状态为就绪（无需授权）
   });
 
   const [loading, setLoading] = useState<LoadingState>({
@@ -96,6 +99,8 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     nodeUnblock: false,
     domainConfig: false,
   });
+
+  const [authPollingInterval, setAuthPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
   const [appVersion] = useState<string>(DEFAULT_APP_VERSION);
@@ -117,6 +122,74 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     setAppState(prev => ({ ...prev, ...updates }));
   }, []);
 
+  // ========== 错误处理函数 ==========
+  const handleError = useCallback((error: unknown, context: string) => {
+    console.error(`[SidebarPanel] ${context}:`, error);
+    
+    let errorMessage = "发生未知错误";
+    let userMessage = "操作失败，请稍后重试";
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      // 根据错误类型提供更友好的中文提示
+      if (errorMessage.includes("cloudflared")) {
+        userMessage = "cloudflared 工具出现问题。请检查网络连接或手动安装 cloudflared。";
+      } else if (errorMessage.includes("network") || errorMessage.includes("连接")) {
+        userMessage = "网络连接失败。请检查您的网络设置并重试。";
+      } else if (errorMessage.includes("timeout") || errorMessage.includes("超时")) {
+        userMessage = "操作超时。请检查网络连接并重试。";
+      } else if (errorMessage.includes("permission") || errorMessage.includes("权限")) {
+        userMessage = "权限不足。请检查文件系统权限或使用管理员权限运行。";
+      } else if (errorMessage.includes("download") || errorMessage.includes("下载")) {
+        userMessage = "下载失败。请检查网络连接或手动下载所需文件。";
+      } else if (errorMessage.includes("auth") || errorMessage.includes("授权")) {
+        userMessage = "授权失败。请检查 Cloudflare 账号设置并确保已正确配置 API Token。";
+      }
+    }
+    
+    // 显示错误提示给用户
+    alert(`❌ ${context}\n\n${userMessage}\n\n错误详情: ${errorMessage}`);
+    
+    return userMessage;
+  }, []);
+
+  // 关联 Cloudflare 账号
+  const associateCloudflareAccount = useCallback(async () => {
+    console.log("[SidebarPanel] 用户点击关联 Cloudflare 账号");
+    // 打开 Cloudflare 登录页面
+    window.open("https://dash.cloudflare.com/profile/api-tokens", "_blank");
+    
+    // 启动轮询检查授权状态
+    const interval = setInterval(async () => {
+      try {
+        const isAuthorized = await invoke<boolean>("check_auth_status");
+        console.log("[SidebarPanel] 轮询检查授权状态:", isAuthorized);
+        if (isAuthorized) {
+          // 停止轮询
+          clearInterval(interval);
+          setAuthPollingInterval(null);
+          // 更新状态为 READY
+          updateAppState({ tunnelState: "READY" });
+          console.log("[SidebarPanel] 授权成功，状态切换为 READY");
+        }
+      } catch (err) {
+        console.error("[SidebarPanel] 轮询检查授权状态失败:", err);
+      }
+    }, 2000); // 2秒一次
+    
+    setAuthPollingInterval(interval);
+  }, [updateAppState]);
+
+  // 清理轮询定时器
+  useEffect(() => {
+    return () => {
+      if (authPollingInterval) {
+        clearInterval(authPollingInterval);
+      }
+    };
+  }, [authPollingInterval]);
+
   // ========== 核心逻辑函数 ==========
   const loadAppInfo = useCallback(async () => {
     try {
@@ -127,10 +200,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
       try {
         const config = await invoke<TunnelConfig>("get_tunnel_config");
         if (config.custom_domain) {
-          updateAppState({ customDomain: config.custom_domain });
-        }
-        if (config.use_custom_domain !== undefined) {
-          updateAppState({ useCustomDomain: config.use_custom_domain });
+          updateAppState({ tunnelDomain: config.custom_domain });
         }
         if (config.tunnel_mode) {
           updateAppState({ tunnelMode: config.tunnel_mode });
@@ -140,9 +210,11 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         }
       } catch (err) {
         console.error("Failed to load tunnel config:", err);
+        // 不显示错误提示，因为可能是首次运行没有配置
       }
     } catch (err) {
       console.error("Failed to load app info:", err);
+      // 不显示错误提示，避免干扰用户体验
     }
   }, [updateAppState]);
 
@@ -160,7 +232,10 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     if (loading.tunnel) return;
 
     updateLoadingState({ tunnel: true });
-    updateAppState({ tunnelStatus: "connecting" });
+    updateAppState({
+      tunnelStatus: "connecting",
+      tunnelState: "STARTING" // 切换到启动中状态
+    });
 
     try {
       const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
@@ -192,18 +267,22 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
       setTimeout(() => {
         if (appState.tunnelStatus === "connecting") {
           updateLoadingState({ tunnel: false });
-          updateAppState({ tunnelStatus: "offline" });
+          updateAppState({
+            tunnelStatus: "offline",
+            tunnelState: "READY" // 超时后回到就绪状态
+          });
         }
       }, TUNNEL_START_TIMEOUT_MS);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("Failed to start tunnel:", err);
-      updateAppState({ tunnelStatus: "error" });
+      updateAppState({
+        tunnelStatus: "error",
+        tunnelState: "READY" // 错误后回到就绪状态
+      });
       updateLoadingState({ tunnel: false });
-
-      alert(`启动隧道失败: ${errorMessage}\n\n请确保:\n1. 网络连接正常\n2. 可以访问 GitHub\n3. 或者手动安装 cloudflared`);
+      
+      handleError(err, "启动隧道失败");
     }
-  }, [loading.tunnel, appState.tunnelStatus, updateLoadingState, updateAppState]);
+  }, [loading.tunnel, appState.tunnelStatus, updateLoadingState, updateAppState, handleError]);
 
   const stopTunnel = useCallback(async () => {
     if (loading.tunnel) return;
@@ -213,14 +292,20 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     try {
       await invoke("stop_tunnel");
 
+      // 停止隧道后，状态应该回到 READY
+      updateAppState({
+        tunnelStatus: "offline",
+        tunnelState: "READY"
+      });
+
       setTimeout(() => {
         updateLoadingState({ tunnel: false });
       }, TUNNEL_STOP_TIMEOUT_MS);
     } catch (err) {
-      console.error("Failed to stop tunnel:", err);
       updateLoadingState({ tunnel: false });
+      handleError(err, "停止隧道失败");
     }
-  }, [loading.tunnel, updateLoadingState]);
+  }, [loading.tunnel, updateLoadingState, updateAppState, handleError]);
 
   const saveCustomDomainConfig = useCallback(async () => {
     if (loading.domainConfig) return;
@@ -228,32 +313,29 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     updateLoadingState({ domainConfig: true });
 
     try {
-      const domainToSave = appState.customDomain.trim();
+      const domainToSave = appState.tunnelDomain.trim();
       const tokenToSave = appState.tunnelToken.trim();
 
       // 验证输入
-      if (appState.tunnelMode === "custom-domain") {
-        if (!domainToSave) {
-          alert("请输入自定义域名");
-          updateLoadingState({ domainConfig: false });
-          return;
-        }
-        if (!domainToSave.includes("://")) {
-          alert("请输入完整的域名（包含 http:// 或 https://）");
-          updateLoadingState({ domainConfig: false });
-          return;
-        }
-      }
-
       if (appState.tunnelMode === "token") {
         if (!tokenToSave) {
-          alert("请输入 Cloudflare Tunnel Token");
+          alert("❌ 配置验证失败\n\n请输入 Cloudflare Tunnel Token");
           updateLoadingState({ domainConfig: false });
           return;
         }
         // 简单的 Token 格式验证（Cloudflare Token 通常很长）
         if (tokenToSave.length < 50) {
-          alert("Token 格式似乎不正确，请确保复制完整的 Token");
+          alert("❌ 配置验证失败\n\nToken 格式似乎不正确，请确保复制完整的 Token\n\nCloudflare Tunnel Token 通常长度超过 50 个字符");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
+        if (!domainToSave) {
+          alert("❌ 配置验证失败\n\n请输入自定义域名");
+          updateLoadingState({ domainConfig: false });
+          return;
+        }
+        if (!domainToSave.includes("://")) {
+          alert("❌ 配置验证失败\n\n请输入完整的域名（包含 http:// 或 https://）\n\n例如: https://your-domain.com");
           updateLoadingState({ domainConfig: false });
           return;
         }
@@ -265,15 +347,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         tunnelToken: tokenToSave || null,
       });
 
-      alert("隧道配置已保存并应用");
+      alert("✅ 配置保存成功\n\n隧道配置已保存并应用");
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("Failed to save tunnel config:", err);
-      alert(`保存隧道配置失败: ${errorMessage}`);
+      handleError(err, "保存隧道配置失败");
     } finally {
       updateLoadingState({ domainConfig: false });
     }
-  }, [loading.domainConfig, appState.customDomain, appState.useCustomDomain, updateLoadingState]);
+  }, [loading.domainConfig, appState.tunnelDomain, appState.tunnelMode, appState.tunnelToken, updateLoadingState, handleError]);
 
   const checkForUpdates = useCallback(async () => {
     if (loading.update) return;
@@ -282,14 +362,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
     try {
       await new Promise(resolve => setTimeout(resolve, UPDATE_CHECK_DELAY_MS));
-      alert("当前已是最新版本");
+      alert("✅ 检查更新完成\n\n当前已是最新版本");
     } catch (err) {
-      console.error("Failed to check updates:", err);
-      alert("检查更新失败，请检查网络连接");
+      handleError(err, "检查更新失败");
     } finally {
       updateLoadingState({ update: false });
     }
-  }, [loading.update, updateLoadingState]);
+  }, [loading.update, updateLoadingState, handleError]);
 
   const toggleNodeUnblock = useCallback(async (enabled: boolean) => {
     try {
@@ -298,14 +377,12 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
       await invoke("set_nodes_unlocked", { enabled });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("Failed to set node unblock:", err);
       updateAppState({ nodeUnblockEnabled: !enabled });
-      alert(`设置节点解禁状态失败: ${errorMessage}`);
+      handleError(err, "设置节点解禁状态失败");
     } finally {
       updateLoadingState({ nodeUnblock: false });
     }
-  }, [updateAppState, updateLoadingState]);
+  }, [updateAppState, updateLoadingState, handleError]);
 
   const handleToggleSidebar = useCallback(async () => {
     onToggleSidebar?.();
@@ -327,12 +404,22 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
       tunnelUrl: url || appState.tunnelUrl,
     };
 
+    // 根据隧道状态更新隧道状态机
+    if (tunnelStatus === "online") {
+      updates.tunnelState = "RUNNING";
+    } else if (tunnelStatus === "offline" || tunnelStatus === "error") {
+      // 只有当当前状态是 STARTING 或 RUNNING 时才切换回 READY
+      if (appState.tunnelState === "STARTING" || appState.tunnelState === "RUNNING") {
+        updates.tunnelState = "READY";
+      }
+    }
+
     if (tunnelStatus === "online" || tunnelStatus === "offline" || tunnelStatus === "error") {
       updateLoadingState({ tunnel: false });
     }
 
     updateAppState(updates);
-  }, [appState.tunnelUrl, updateAppState, updateLoadingState]);
+  }, [appState.tunnelUrl, appState.tunnelState, updateAppState, updateLoadingState]);
 
   // ========== 副作用 ==========
   useEffect(() => {
@@ -395,6 +482,208 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     </div>
   );
 
+  // ========== 隧道状态渲染函数 ==========
+  const renderUnauthorizedState = () => (
+    <div className="service-card">
+      <div className="service-header">
+        <div className="service-info">
+          <h4 className="service-name">Cloudflare 隧道</h4>
+          <span className="service-status text-red-600">
+            未授权
+          </span>
+        </div>
+      </div>
+
+      <div className="tunnel-wizard-step">
+        <div className="wizard-step-header">
+          <div className="step-number">1</div>
+          <div className="step-title">关联 Cloudflare 账号</div>
+        </div>
+        <div className="wizard-step-content">
+          <p className="step-description">
+            使用 Cloudflare 账号授权，以便创建和管理隧道。点击下方按钮前往 Cloudflare 仪表盘生成 API Token。
+          </p>
+          <button
+            onClick={associateCloudflareAccount}
+            className="wizard-primary-btn"
+            disabled={!!authPollingInterval}
+          >
+            {authPollingInterval ? "等待授权中..." : "关联 Cloudflare 账号"}
+          </button>
+          {authPollingInterval && (
+            <div className="auth-polling-info">
+              <div className="spinner-small"></div>
+              <span className="polling-text">正在检查授权状态...</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderReadyState = () => {
+    const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
+    const isTunnelActive = appState.tunnelStatus === "online" || appState.tunnelStatus === "connecting";
+
+    return (
+      <div className="service-card">
+        <div className="service-header">
+          <div className="service-info">
+            <h4 className="service-name">Cloudflare 隧道</h4>
+            <span className={`service-status ${color}`}>
+              {text}
+            </span>
+          </div>
+          <div className="service-switch">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={isTunnelActive}
+                onChange={(e) => e.target.checked ? startTunnel() : stopTunnel()}
+                disabled={loading.tunnel}
+              />
+              <span className="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div className="tunnel-wizard-step">
+          <div className="wizard-step-header">
+            <div className="step-number">2</div>
+            <div className="step-title">配置隧道</div>
+          </div>
+          <div className="wizard-step-content">
+            <p className="step-description">
+              选择隧道模式并配置相关参数，然后点击"一键开启"启动隧道。
+            </p>
+            
+            {renderCustomDomainSection()}
+            
+            <div className="wizard-actions">
+              <button
+                onClick={startTunnel}
+                disabled={loading.tunnel}
+                className="wizard-primary-btn"
+              >
+                {loading.tunnel ? "启动中..." : "一键开启隧道"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStartingState = () => (
+    <div className="service-card">
+      <div className="service-header">
+        <div className="service-info">
+          <h4 className="service-name">Cloudflare 隧道</h4>
+          <span className="service-status text-yellow-600">
+            启动中
+          </span>
+        </div>
+      </div>
+
+      <div className="tunnel-wizard-step">
+        <div className="wizard-step-header">
+          <div className="step-number">3</div>
+          <div className="step-title">正在启动隧道</div>
+        </div>
+        <div className="wizard-step-content">
+          <div className="loading-indicator">
+            <div className="spinner-large"></div>
+            <p className="loading-text">正在创建隧道并配置 DNS...</p>
+            <p className="loading-subtext">这可能需要几秒钟时间</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderRunningState = () => {
+    const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
+
+    return (
+      <div className="service-card">
+        <div className="service-header">
+          <div className="service-info">
+            <h4 className="service-name">Cloudflare 隧道</h4>
+            <span className={`service-status ${color}`}>
+              {text}
+            </span>
+          </div>
+          <div className="service-switch">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={true}
+                onChange={() => stopTunnel()}
+                disabled={loading.tunnel}
+              />
+              <span className="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div className="tunnel-wizard-step">
+          <div className="wizard-step-header">
+            <div className="step-number">4</div>
+            <div className="step-title">隧道运行中</div>
+          </div>
+          <div className="wizard-step-content">
+            {appState.tunnelStatus === "online" && appState.tunnelUrl && (
+              <div className="tunnel-url-section">
+                <div className="tunnel-url-label">公网地址:</div>
+                <div className="tunnel-url-value">
+                  <a
+                    href={appState.tunnelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="tunnel-link"
+                  >
+                    {appState.tunnelUrl.replace('https://', '')}
+                  </a>
+                </div>
+                <button
+                  onClick={() => {
+                    console.log("[SidebarPanel] 用户点击刷新 n8n UI");
+                    onTunnelOnline?.();
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    padding: '6px 12px',
+                    backgroundColor: '#4CAF50',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    width: '100%',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  刷新 n8n UI
+                </button>
+              </div>
+            )}
+
+            {cloudflaredInfo && (
+              <div className="cloudflared-info">
+                <span className="info-label">cloudflared:</span>
+                <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
+                  {cloudflaredInfo.installed
+                    ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
+                    : "未安装 (点击隧道开关将自动下载)"}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderServiceStatusCard = () => {
     const { text: n8nText, color: n8nColor } = getN8nStatusDisplay(appState.n8nStatus);
 
@@ -446,81 +735,94 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
   };
 
   const renderTunnelCard = () => {
-    const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
-    const isTunnelActive = appState.tunnelStatus === "online" || appState.tunnelStatus === "connecting";
+    // 根据隧道状态机渲染不同的UI
+    switch (appState.tunnelState) {
+      case "UNAUTHORIZED":
+        return renderUnauthorizedState();
+      case "READY":
+        return renderReadyState();
+      case "STARTING":
+        return renderStartingState();
+      case "RUNNING":
+        return renderRunningState();
+      default:
+        // 回退到原始UI
+        const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
+        const isTunnelActive = appState.tunnelStatus === "online" || appState.tunnelStatus === "connecting";
 
-    return (
-      <div className="service-card">
-        <div className="service-header">
-          <div className="service-info">
-            <h4 className="service-name">Cloudflare 隧道</h4>
-            <span className={`service-status ${color}`}>
-              {text}
-            </span>
-          </div>
-          <div className="service-switch">
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={isTunnelActive}
-                onChange={(e) => e.target.checked ? startTunnel() : stopTunnel()}
-                disabled={loading.tunnel}
-              />
-              <span className="slider"></span>
-            </label>
-          </div>
-        </div>
-
-        {appState.tunnelStatus === "online" && appState.tunnelUrl && (
-          <div className="tunnel-url-section">
-            <div className="tunnel-url-label">公网地址:</div>
-            <div className="tunnel-url-value">
-              <a
-                href={appState.tunnelUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="tunnel-link"
-              >
-                {appState.tunnelUrl.replace('https://', '')}
-              </a>
+        return (
+          <div className="service-card">
+            <div className="service-header">
+              <div className="service-info">
+                <h4 className="service-name">Cloudflare 隧道</h4>
+                <span className={`service-status ${color}`}>
+                  {text}
+                </span>
+              </div>
+              <div className="service-switch">
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={isTunnelActive}
+                    onChange={(e) => e.target.checked ? startTunnel() : stopTunnel()}
+                    disabled={loading.tunnel}
+                  />
+                  <span className="slider"></span>
+                </label>
+              </div>
             </div>
-            <button
-              onClick={() => {
-                console.log("[SidebarPanel] 用户点击刷新 n8n UI");
-                onTunnelOnline?.();
-              }}
-              style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                backgroundColor: '#4CAF50',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                width: '100%',
-                fontFamily: 'inherit'
-              }}
-            >
-              刷新 n8n UI
-            </button>
-          </div>
-        )}
 
-        {cloudflaredInfo && (
-          <div className="cloudflared-info">
-            <span className="info-label">cloudflared:</span>
-            <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
-              {cloudflaredInfo.installed
-                ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
-                : "未安装 (点击隧道开关将自动下载)"}
-            </span>
-          </div>
-        )}
+            {appState.tunnelStatus === "online" && appState.tunnelUrl && (
+              <div className="tunnel-url-section">
+                <div className="tunnel-url-label">公网地址:</div>
+                <div className="tunnel-url-value">
+                  <a
+                    href={appState.tunnelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="tunnel-link"
+                  >
+                    {appState.tunnelUrl.replace('https://', '')}
+                  </a>
+                </div>
+                <button
+                  onClick={() => {
+                    console.log("[SidebarPanel] 用户点击刷新 n8n UI");
+                    onTunnelOnline?.();
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    padding: '6px 12px',
+                    backgroundColor: '#4CAF50',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    width: '100%',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  刷新 n8n UI
+                </button>
+              </div>
+            )}
 
-        {renderCustomDomainSection()}
-      </div>
-    );
+            {cloudflaredInfo && (
+              <div className="cloudflared-info">
+                <span className="info-label">cloudflared:</span>
+                <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
+                  {cloudflaredInfo.installed
+                    ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
+                    : "未安装 (点击隧道开关将自动下载)"}
+                </span>
+              </div>
+            )}
+
+            {renderCustomDomainSection()}
+          </div>
+        );
+    }
   };
 
   const renderCustomDomainSection = () => (
@@ -530,7 +832,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
       {/* 隧道模式选择 */}
       <div className="tunnel-mode-selector mb-4">
         <div className="flex gap-2">
-          {(["temporary", "custom-domain", "token"] as const).map((mode) => (
+          {(["temporary", "token"] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => updateAppState({ tunnelMode: mode })}
@@ -547,81 +849,86 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
                 transition: "all 0.2s",
               }}
             >
-              {mode === "temporary" && "临时隧道"}
-              {mode === "custom-domain" && "自定义域名"}
-              {mode === "token" && "Token 固定"}
+              {mode === "temporary" && "随机临时域名"}
+              {mode === "token" && "固定自定义域名"}
             </button>
           ))}
         </div>
         <p className="text-xs text-gray-500 mt-2">
           {appState.tunnelMode === "temporary" && "每次启动随机生成临时公网地址"}
-          {appState.tunnelMode === "custom-domain" && "使用自定义域名作为公网地址"}
           {appState.tunnelMode === "token" && "使用 Cloudflare Tunnel Token 建立固定隧道"}
         </p>
       </div>
 
-      {/* 自定义域名输入 */}
-      {appState.tunnelMode === "custom-domain" && (
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            自定义域名
-          </label>
-          <input
-            type="text"
-            value={appState.customDomain}
-            onChange={(e) => updateAppState({ customDomain: e.target.value })}
-            placeholder="https://your-domain.com"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={loading.domainConfig}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
-          </p>
-        </div>
-      )}
-
-      {/* Token 输入 */}
+      {/* Token 模式输入区域 */}
       {appState.tunnelMode === "token" && (
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Tunnel Token
-          </label>
-          <textarea
-            value={appState.tunnelToken}
-            onChange={(e) => updateAppState({ tunnelToken: e.target.value })}
-            placeholder="粘贴您的 Cloudflare Tunnel Token..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-            rows={3}
-            disabled={loading.domainConfig}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
-          </p>
-        </div>
-      )}
+        <>
+          {/* Domain 输入 */}
+          <div className="mb-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              自定义域名
+            </label>
+            <input
+              type="text"
+              value={appState.tunnelDomain}
+              onChange={(e) => updateAppState({ tunnelDomain: e.target.value })}
+              placeholder="https://your-domain.com"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={loading.domainConfig}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
+            </p>
+          </div>
 
-      {/* 保存按钮 */}
-      {(appState.tunnelMode === "custom-domain" || appState.tunnelMode === "token") && (
-        <div>
-          <button
-            onClick={saveCustomDomainConfig}
-            disabled={loading.domainConfig}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              backgroundColor: loading.domainConfig ? "#cbd5e1" : "#3b82f6",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: loading.domainConfig ? "not-allowed" : "pointer",
-              fontSize: "12px",
-              fontWeight: "500",
-              transition: "background-color 0.2s",
-            }}
-          >
-            {loading.domainConfig ? "保存中..." : "保存配置"}
-          </button>
-        </div>
+          {/* Token 输入 */}
+          <div className="mb-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tunnel Token
+            </label>
+            <textarea
+              value={appState.tunnelToken}
+              onChange={(e) => updateAppState({ tunnelToken: e.target.value })}
+              placeholder="粘贴您的 Cloudflare Tunnel Token..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              rows={3}
+              disabled={loading.domainConfig}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
+              <a
+                href="https://dash.cloudflare.com/profile/api-tokens"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 ml-1"
+              >
+                (获取 Token)
+              </a>
+            </p>
+          </div>
+
+          {/* 保存按钮 */}
+          <div>
+            <button
+              onClick={saveCustomDomainConfig}
+              disabled={loading.domainConfig}
+              style={{
+                width: "100%",
+                padding: "8px 12px",
+                backgroundColor: loading.domainConfig ? "#cbd5e1" : "#3b82f6",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: loading.domainConfig ? "not-allowed" : "pointer",
+                fontSize: "12px",
+                fontWeight: "500",
+                transition: "background-color 0.2s",
+              }}
+            >
+              {loading.domainConfig ? "保存中..." : "保存配置"}
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

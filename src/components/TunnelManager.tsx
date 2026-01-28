@@ -20,6 +20,10 @@ interface TunnelConfig {
   last_url?: string;
   auto_start: boolean;
   created_at: string;
+  custom_domain?: string;
+  use_custom_domain?: boolean;
+  tunnel_mode?: "temporary" | "token";
+  tunnel_token?: string;
 }
 
 export interface CloudflaredVersionInfo {
@@ -60,8 +64,15 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
     error: "",
   });
   const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
-  const [config, setConfig] = useState<TunnelConfig>({ auto_start: false, created_at: "" });
+  const [config, setConfig] = useState<TunnelConfig>({
+    auto_start: false,
+    created_at: "",
+    tunnel_mode: "temporary",
+    tunnel_token: "",
+    custom_domain: ""
+  });
   const [showConfig, setShowConfig] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // ========== 工具函数 ==========
   const getStatusDisplay = useCallback((status: TunnelStatus) => {
@@ -194,6 +205,28 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       }));
     }
   }, [loadTunnelState]);
+
+  const applyTunnelConfig = useCallback(async () => {
+    if (isSavingConfig) return;
+    
+    setIsSavingConfig(true);
+    try {
+      await invoke("apply_tunnel_config", {
+        tunnelMode: config.tunnel_mode || "temporary",
+        customDomain: config.custom_domain || null,
+        tunnelToken: config.tunnel_token || null,
+      });
+      alert("隧道配置已保存");
+    } catch (err) {
+      console.error("Failed to apply tunnel config:", err);
+      setTunnelState(prev => ({
+        ...prev,
+        error: "保存配置失败",
+      }));
+    } finally {
+      setIsSavingConfig(false);
+    }
+  }, [config, isSavingConfig]);
 
   // ========== 事件处理函数 ==========
   const handleTunnelUpdate = useCallback((event: Event<TunnelEventPayload>) => {
@@ -398,7 +431,78 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
         <h4 className="font-medium mb-3">隧道配置</h4>
         
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* 隧道模式选择 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">隧道模式</label>
+            <div className="flex gap-2">
+              {(["temporary", "token"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setConfig(prev => ({ ...prev, tunnel_mode: mode }))}
+                  className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                    config.tunnel_mode === mode
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {mode === "temporary" ? "随机临时域名" : "固定自定义域名"}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {config.tunnel_mode === "temporary"
+                ? "每次启动随机生成临时公网地址"
+                : "使用 Cloudflare Tunnel Token 建立固定隧道"}
+            </p>
+          </div>
+
+          {/* Token 模式配置 */}
+          {config.tunnel_mode === "token" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  自定义域名
+                </label>
+                <input
+                  type="text"
+                  value={config.custom_domain || ""}
+                  onChange={(e) => setConfig(prev => ({ ...prev, custom_domain: e.target.value }))}
+                  placeholder="https://your-domain.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tunnel Token
+                </label>
+                <textarea
+                  value={config.tunnel_token || ""}
+                  onChange={(e) => setConfig(prev => ({ ...prev, tunnel_token: e.target.value }))}
+                  placeholder="粘贴您的 Cloudflare Tunnel Token..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  rows={3}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
+                  <a
+                    href="https://dash.cloudflare.com/profile/api-tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 ml-1"
+                  >
+                    (获取 Token)
+                  </a>
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* 自动启动配置 */}
           <div className="flex items-center">
             <input
               type="checkbox"
@@ -419,7 +523,16 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
             </div>
           )}
 
-          <div className="pt-2 border-t">
+          {/* 配置操作按钮 */}
+          <div className="pt-2 border-t space-y-3">
+            <button
+              onClick={applyTunnelConfig}
+              disabled={isSavingConfig}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              {isSavingConfig ? "保存中..." : "保存隧道配置"}
+            </button>
+
             <button
               onClick={clearCloudflaredCache}
               className="px-3 py-1 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
@@ -439,8 +552,9 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
     <div className="mt-4 text-sm text-gray-600">
       <p className="font-medium">使用说明:</p>
       <ul className="list-disc pl-5 mt-1 space-y-1">
-        <li>启动隧道后，将获得一个临时的公网地址</li>
-        <li>该地址可用于 OAuth 回调、Webhook 等外部服务访问</li>
+        <li>选择"随机临时域名"模式：每次启动获得随机临时地址</li>
+        <li>选择"固定自定义域名"模式：配置 Token 和域名获得固定地址</li>
+        <li>启动隧道后，将获得公网地址用于 OAuth 回调、Webhook 等</li>
         <li>隧道关闭后地址失效，确保隐私安全</li>
         <li>复制地址用于 Google OAuth、GitHub Webhook 等配置</li>
       </ul>

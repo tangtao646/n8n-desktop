@@ -45,21 +45,16 @@ static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 /// 确定最终的隧道 URL（根据隧道模式和配置）
 fn determine_tunnel_url(
-    tunnel_mode: &str,
+    tunnel_mode: &crate::api::tunnel::TunnelMode,
     custom_domain: Option<String>,
     tunnel_url: Option<String>,
 ) -> Option<String> {
     match tunnel_mode {
-        "custom-domain" => {
-            // 自定义域名模式：返回配置的自定义域名
-            custom_domain.filter(|d| !d.trim().is_empty())
+        crate::api::tunnel::TunnelMode::Token { domain, .. } => {
+            // Token 模式：返回配置的自定义域名
+            Some(format!("https://{}", domain))
         }
-        "token" => {
-            // Token 模式：使用 cloudflared 自动生成的 URL
-            // 这个 URL 来自 cloudflared 的输出
-            tunnel_url
-        }
-        _ => {
+        crate::api::tunnel::TunnelMode::Temporary => {
             // 临时隧道模式：使用 cloudflared 生成的临时 URL
             tunnel_url
         }
@@ -99,6 +94,7 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
         if let Some(final_url) = determine_tunnel_url(&tunnel_mode, custom_domain, tunnel_url)
         {
             envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
+            envs.insert("N8N_WEBHOOK_URL".to_string(), final_url.clone());
             envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
             envs.insert("N8N_CORS_ALLOWED_ORIGINS".to_string(), "*".to_string());
         }
