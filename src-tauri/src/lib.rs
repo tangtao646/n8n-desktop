@@ -2,7 +2,7 @@ pub mod api;
 pub mod services;
 use std::env;
 
-use tauri::{Manager, RunEvent};
+use tauri::RunEvent;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

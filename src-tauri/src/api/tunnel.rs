@@ -1,13 +1,11 @@
 use chrono;
-use dirs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_yaml;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::n8n_core::{construct_n8n_envs, shutdown_n8n};
@@ -261,7 +259,7 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
                 println!("[Tunnel] ✓ n8n 重启成功");
                 println!("[Tunnel] ✓ 新的 WEBHOOK_URL: {}", url);
                 println!("[Tunnel] ⚠️  请重新登录 n8n 以刷新 webhook 地址");
-                
+
                 // 广播全局同步事件，通知前端刷新 UI
                 emit_global_sync(app);
             }
@@ -504,8 +502,8 @@ pub async fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
 pub async fn apply_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
     tunnel_mode: TunnelMode,
-    custom_domain: Option<String>,
-    tunnel_token: Option<String>,
+    _custom_domain: Option<String>,
+    _tunnel_token: Option<String>,
 ) -> Result<(), String> {
     // 验证输入
     match &tunnel_mode {

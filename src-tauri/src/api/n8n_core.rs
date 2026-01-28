@@ -48,7 +48,7 @@ static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 /// 确定最终的隧道 URL（根据隧道模式和配置）
 fn determine_tunnel_url(
     tunnel_mode: &crate::api::tunnel::TunnelMode,
-    custom_domain: Option<String>,
+    _custom_domain: Option<String>,
     tunnel_url: Option<String>,
 ) -> Option<String> {
     match tunnel_mode {
@@ -93,8 +93,7 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
         };
 
         // 使用辅助函数确定最终 URL
-        if let Some(final_url) = determine_tunnel_url(&tunnel_mode, custom_domain, tunnel_url)
-        {
+        if let Some(final_url) = determine_tunnel_url(&tunnel_mode, custom_domain, tunnel_url) {
             envs.insert("WEBHOOK_URL".to_string(), final_url.clone());
             envs.insert("N8N_WEBHOOK_URL".to_string(), final_url.clone());
             envs.insert("N8N_EDITOR_BASE_URL".to_string(), final_url);
@@ -251,8 +250,6 @@ pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> Result<(), String> 
 
 /// 安装 n8n 核心包 (下载 + 解压，带 SHA256 验证)
 pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<(), String> {
-    use std::io;
-
     let app_handle = window.app_handle();
 
     let platform = match env::consts::OS {
@@ -454,9 +451,8 @@ pub async fn proxy_health_check() -> Result<String, String> {
                         last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                         continue;
-                    } else {
-                        last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
                     }
+                    last_error = Some(format!("端点 {} 返回状态码: {}", endpoint, status));
                 }
                 Err(e) => {
                     // 网络错误也可以重试
@@ -470,9 +466,8 @@ pub async fn proxy_health_check() -> Result<String, String> {
                         last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                         continue;
-                    } else {
-                        last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
                     }
+                    last_error = Some(format!("端点 {} 请求失败: {}", endpoint, e));
                 }
             }
         }
@@ -567,7 +562,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
     match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
         Ok(_) => {
             println!("[DEBUG] n8n 已重启，节点解禁设置已应用");
-            
+
             // 广播全局同步事件，通知前端刷新 UI
             emit_global_sync(&app);
             Ok(())

@@ -9,6 +9,19 @@ edition = "2021"
 name = "n8n_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[lints.clippy]
+# 1. 先定义大组，优先级设为低（负数或 0）
+pedantic = { level = "warn", priority = 0 }
+nursery = { level = "warn", priority = 0 }
+
+# 2. 再定义具体的强制项，优先级设为高
+unwrap_used = { level = "deny", priority = 1 }
+
+# 3. 针对你觉得太吵的逻辑进行精准降噪
+missing_errors_doc = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }
+# 解决你提到的 if-else 和 match 冲突
+single_match = { level = "allow", priority = 1 }
 [build-dependencies]
 tauri-build = { version = "2.1.1", features = [] }
 

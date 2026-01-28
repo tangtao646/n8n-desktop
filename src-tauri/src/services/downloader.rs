@@ -1,9 +1,9 @@
+use futures_util::StreamExt;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Runtime, Window};
-use futures_util::StreamExt;
 
 // 引入 Unix 专属权限库
 #[cfg(unix)]
@@ -58,10 +58,10 @@ pub async fn download_file<R: Runtime>(
     download_type: String,
 ) -> Result<(), String> {
     let config = analyze_download_config(&url, &dest, download_type)?;
-    
+
     process_downloaded_content(&window, &config).await?;
     finalize_download(&window, &config).await?;
-    
+
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn analyze_download_config(
     let pure_url = url.split('?').next().unwrap_or(url).to_lowercase();
     let is_archive = ARCHIVE_EXTENSIONS.iter().any(|ext| pure_url.ends_with(ext));
     let destination_is_file = dest.extension().is_some() && dest.parent().is_some();
-    
+
     Ok(DownloadConfig {
         url: url.to_string(),
         destination: dest.to_path_buf(),
@@ -94,20 +94,20 @@ async fn download_with_progress<R: Runtime>(
     let client = create_http_client()?;
     let response = fetch_http_response(&client, &config.url).await?;
     validate_http_response(&response)?;
-    
+
     let total_size = response.content_length().unwrap_or(0);
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut downloaded = 0;
-    
+
     let mut last_emit_time = Instant::now();
     let mut last_emit_progress = -1.0;
-    
+
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| format!("下载流错误: {}", e))?;
+        let chunk = chunk_result.map_err(|e| format!("下载流错误: {e}"))?;
         buffer.extend_from_slice(&chunk);
         downloaded += chunk.len() as u64;
-        
+
         if total_size > 0 {
             update_progress_if_needed(
                 window,
@@ -119,7 +119,7 @@ async fn download_with_progress<R: Runtime>(
             );
         }
     }
-    
+
     Ok(buffer)
 }
 
@@ -128,7 +128,7 @@ fn create_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
 }
 
 /// 获取 HTTP 响应
@@ -136,10 +136,11 @@ async fn fetch_http_response(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<reqwest::Response, String> {
-    client.get(url)
+    client
+        .get(url)
         .send()
         .await
-        .map_err(|e| format!("HTTP 请求失败 '{}': {}", url, e))
+        .map_err(|e| format!("HTTP 请求失败 '{url}': {e}"))
 }
 
 /// 验证 HTTP 响应状态
@@ -159,16 +160,20 @@ fn update_progress_if_needed<R: Runtime>(
     last_emit_time: &mut Instant,
     last_emit_progress: &mut f64,
 ) {
-    let progress = (downloaded as f64 / total as f64) * 100.0;
-    let time_elapsed = last_emit_time.elapsed() >= Duration::from_millis(PROGRESS_UPDATE_MIN_INTERVAL_MS);
+    let progress = (f64::from(downloaded as u32) / f64::from(total as u32)) * 100.0;
+    let time_elapsed =
+        last_emit_time.elapsed() >= Duration::from_millis(PROGRESS_UPDATE_MIN_INTERVAL_MS);
     let progress_increased = progress - *last_emit_progress >= PROGRESS_UPDATE_MIN_INCREMENT;
-    
+
     if time_elapsed || progress_increased {
-        let _ = window.emit("download-progress", Progress {
-            progress,
-            download_type: download_type.to_string(),
-        });
-        
+        let _ = window.emit(
+            "download-progress",
+            Progress {
+                progress,
+                download_type: download_type.to_string(),
+            },
+        );
+
         *last_emit_progress = progress;
         *last_emit_time = Instant::now();
     }
@@ -180,7 +185,7 @@ async fn process_downloaded_content<R: Runtime>(
     config: &DownloadConfig,
 ) -> Result<(), String> {
     let buffer = download_with_progress(window, config).await?;
-    
+
     if config.is_archive && !config.destination_is_file {
         handle_archive_download(window, config, &buffer).await
     } else {
@@ -196,11 +201,11 @@ async fn handle_archive_download<R: Runtime>(
 ) -> Result<(), String> {
     prepare_destination_directory(&config.destination)?;
     notify_extraction_start(window, &config.download_type);
-    
+
     extract_archive(buffer, &config.destination)?;
     flatten_single_directory(&config.destination)?;
     fix_permissions_if_needed(&config.destination)?;
-    
+
     Ok(())
 }
 
@@ -216,16 +221,18 @@ fn prepare_destination_directory(dest: &Path) -> Result<(), String> {
         fs::remove_dir_all(dest)
             .map_err(|e| format!("清理目录 '{}' 失败: {}", dest.display(), e))?;
     }
-    
-    fs::create_dir_all(dest)
-        .map_err(|e| format!("创建目录 '{}' 失败: {}", dest.display(), e))
+
+    fs::create_dir_all(dest).map_err(|e| format!("创建目录 '{}' 失败: {}", dest.display(), e))
 }
 
 /// 通知解压开始
 fn notify_extraction_start<R: Runtime>(window: &Window<R>, download_type: &str) {
-    let _ = window.emit("extraction-start", ExtractionStart {
-        download_type: download_type.to_string(),
-    });
+    let _ = window.emit(
+        "extraction-start",
+        ExtractionStart {
+            download_type: download_type.to_string(),
+        },
+    );
 }
 
 /// 确保父目录存在
@@ -259,10 +266,11 @@ fn is_tar_gz_archive(buffer: &[u8]) -> bool {
 
 /// 解压 ZIP 文件
 fn extract_zip(buffer: &[u8], dest: &Path) -> Result<(), String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(buffer))
-        .map_err(|e| format!("ZIP 格式非法: {}", e))?;
-    
-    archive.extract(dest)
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(buffer)).map_err(|e| format!("ZIP 格式非法: {}", e))?;
+
+    archive
+        .extract(dest)
         .map_err(|e| format!("ZIP 解压失败: {}", e))
 }
 
@@ -270,11 +278,12 @@ fn extract_zip(buffer: &[u8], dest: &Path) -> Result<(), String> {
 fn extract_tar_gz(buffer: &[u8], dest: &Path) -> Result<(), String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
-    
+
     let tar_gz = GzDecoder::new(Cursor::new(buffer));
     let mut archive = Archive::new(tar_gz);
-    
-    archive.unpack(dest)
+
+    archive
+        .unpack(dest)
         .map_err(|e| format!("TAR.GZ 解压失败: {}", e))
 }
 
@@ -282,21 +291,22 @@ fn extract_tar_gz(buffer: &[u8], dest: &Path) -> Result<(), String> {
 fn flatten_single_directory(dest: &Path) -> Result<(), String> {
     let entries: Vec<_> = fs::read_dir(dest)
         .map_err(|e| format!("读取目录 '{}' 失败: {}", dest.display(), e))?
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .collect();
-    
-    let directories: Vec<_> = entries.iter()
+
+    let directories: Vec<_> = entries
+        .iter()
         .filter(|entry| {
             let path = entry.path();
             let is_dir = path.is_dir();
-            let is_hidden = path.file_name()
+            let is_hidden = path
+                .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with('.'))
-                .unwrap_or(false);
+                .is_some_and(|n| n.starts_with('.'));
             is_dir && !is_hidden
         })
         .collect();
-    
+
     // 如果只有一个非隐藏目录，展平它
     if directories.len() == 1 {
         let sub_dir = &directories[0].path();
@@ -304,7 +314,7 @@ fn flatten_single_directory(dest: &Path) -> Result<(), String> {
         fs::remove_dir(sub_dir)
             .map_err(|e| format!("删除目录 '{}' 失败: {}", sub_dir.display(), e))?;
     }
-    
+
     Ok(())
 }
 
@@ -312,18 +322,23 @@ fn flatten_single_directory(dest: &Path) -> Result<(), String> {
 fn flatten_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
     let entries = fs::read_dir(source_dir)
         .map_err(|e| format!("读取目录 '{}' 失败: {}", source_dir.display(), e))?;
-    
+
     for entry_result in entries {
-        let entry = entry_result
-            .map_err(|e| format!("读取目录条目失败: {}", e))?;
-        
+        let entry = entry_result.map_err(|e| format!("读取目录条目失败: {}", e))?;
+
         let from = entry.path();
         let to = target_dir.join(entry.file_name());
-        
-        fs::rename(&from, &to)
-            .map_err(|e| format!("移动文件 '{}' 到 '{}' 失败: {}", from.display(), to.display(), e))?;
+
+        fs::rename(&from, &to).map_err(|e| {
+            format!(
+                "移动文件 '{}' 到 '{}' 失败: {}",
+                from.display(),
+                to.display(),
+                e
+            )
+        })?;
     }
-    
+
     Ok(())
 }
 
@@ -331,13 +346,12 @@ fn flatten_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<()
 fn fix_permissions_if_needed(dest: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        fix_recursive_permissions(dest)
-            .map_err(|e| format!("权限修复失败: {}", e))?;
-        
+        fix_recursive_permissions(dest).map_err(|e| format!("权限修复失败: {}", e))?;
+
         #[cfg(target_os = "macos")]
         remove_macos_quarantine_attribute(dest);
     }
-    
+
     Ok(())
 }
 
@@ -360,9 +374,12 @@ fn fix_recursive_permissions(path: &Path) -> std::io::Result<()> {
 /// 移除 macOS 隔离属性
 #[cfg(target_os = "macos")]
 fn remove_macos_quarantine_attribute(path: &Path) {
-    let _ = std::process::Command::new("xattr")
-        .args(["-cr", path.to_str().unwrap()])
-        .spawn();
+    let _ = path.to_str().and_then(|path_str| {
+        std::process::Command::new("xattr")
+            .args(["-cr", path_str])
+            .spawn()
+            .ok()
+    });
 }
 
 /// 完成下载
@@ -370,11 +387,14 @@ async fn finalize_download<R: Runtime>(
     window: &Window<R>,
     config: &DownloadConfig,
 ) -> Result<(), String> {
-    let _ = window.emit("download-progress", Progress {
-        progress: 100.0,
-        download_type: config.download_type.clone(),
-    });
-    
+    let _ = window.emit(
+        "download-progress",
+        Progress {
+            progress: 100.0,
+            download_type: config.download_type.clone(),
+        },
+    );
+
     Ok(())
 }
 
@@ -383,53 +403,57 @@ async fn finalize_download<R: Runtime>(
 mod tests {
     use super::*;
     use std::env::temp_dir;
-    
+
     #[test]
     fn test_analyze_download_config() {
         let url = "https://example.com/file.zip";
         let dest = temp_dir().join("test.zip");
         let download_type = "test".to_string();
-        
-        let config = analyze_download_config(url, &dest, download_type).unwrap();
-        
+
+        let config = analyze_download_config(url, &dest, download_type)
+            .expect("Failed to analyze download config");
+
         assert_eq!(config.url, url);
         assert!(config.is_archive);
         assert!(config.destination_is_file);
     }
-    
+
     #[test]
     fn test_is_tar_gz_archive() {
         // GZIP 魔数
         let gzip_magic = vec![0x1f, 0x8b, 0x08];
         assert!(is_tar_gz_archive(&gzip_magic));
-        
+
         // 非 GZIP 数据
         let non_gzip = vec![0x00, 0x01, 0x02];
         assert!(!is_tar_gz_archive(&non_gzip));
     }
-    
+
     #[test]
     fn test_ensure_parent_directory_exists() {
         let temp_file = temp_dir().join("test_parent").join("file.txt");
-        
+
         assert!(ensure_parent_directory_exists(&temp_file).is_ok());
-        assert!(temp_file.parent().unwrap().exists());
-        
+        assert!(temp_file
+            .parent()
+            .expect("temp file should have parent")
+            .exists());
+
         // 清理
-        fs::remove_dir_all(temp_file.parent().unwrap()).ok();
+        fs::remove_dir_all(temp_file.parent().expect("temp file should have parent")).ok();
     }
-    
+
     #[test]
     fn test_write_file_content() {
         let temp_file = temp_dir().join("test_write.txt");
         let content = b"Hello, World!";
-        
+
         assert!(write_file_content(&temp_file, content).is_ok());
         assert!(temp_file.exists());
-        
-        let read_content = fs::read(&temp_file).unwrap();
+
+        let read_content = fs::read(&temp_file).expect("Failed to read test file");
         assert_eq!(read_content, content);
-        
+
         // 清理
         fs::remove_file(&temp_file).ok();
     }
