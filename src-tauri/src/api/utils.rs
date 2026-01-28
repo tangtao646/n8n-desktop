@@ -5,6 +5,8 @@ use zip::ZipArchive;
 use std::io::{self, Read, Write};
 use regex::Regex;
 use url::Url;
+use tauri::{AppHandle, Emitter, Runtime};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // --- 常量定义 ---
 
@@ -233,6 +235,20 @@ pub fn extract_tunnel_domain_from_output(output: &str) -> Option<String> {
     re.captures(output)
         .and_then(|caps| caps.get(1))
         .map(|matched| format!("https://{}", matched.as_str()))
+}
+
+/// 全局 UI 同步事件广播
+/// 发送 app://sync-state 事件，payload 为当前 Unix 时间戳字符串
+pub fn emit_global_sync<R: Runtime>(app: &AppHandle<R>) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string();
+    
+    let timestamp_clone = timestamp.clone();
+    let _ = app.emit("app://sync-state", timestamp_clone);
+    println!("[GlobalSync] 广播同步事件: {}", timestamp);
 }
 
 // --- 测试模块 ---

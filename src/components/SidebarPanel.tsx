@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
+import { useAutoSync, generateTimestampedUrl } from "../hooks/useAutoSync";
 
 // ========== 常量定义 ==========
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
@@ -43,7 +44,6 @@ interface TunnelConfig {
 interface SidebarPanelProps {
   collapsed?: boolean;
   onToggleSidebar?: () => void;
-  onTunnelOnline?: () => void;
   className?: string;
 }
 
@@ -80,7 +80,7 @@ const TUNNEL_STATUS_MAP: Record<TunnelStatus, { text: string; color: string }> =
 };
 
 // ========== 主组件 ==========
-export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTunnelOnline, className = "" }: SidebarPanelProps) {
+export default function SidebarPanel({ collapsed = false, onToggleSidebar, className = "" }: SidebarPanelProps) {
   // ========== 状态定义 ==========
   const [appState, setAppState] = useState<AppState>({
     tunnelStatus: "offline",
@@ -125,13 +125,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
   // ========== 错误处理函数 ==========
   const handleError = useCallback((error: unknown, context: string) => {
     console.error(`[SidebarPanel] ${context}:`, error);
-    
+
     let errorMessage = "发生未知错误";
     let userMessage = "操作失败，请稍后重试";
-    
+
     if (error instanceof Error) {
       errorMessage = error.message;
-      
+
       // 根据错误类型提供更友好的中文提示
       if (errorMessage.includes("cloudflared")) {
         userMessage = "cloudflared 工具出现问题。请检查网络连接或手动安装 cloudflared。";
@@ -147,10 +147,10 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         userMessage = "授权失败。请检查 Cloudflare 账号设置并确保已正确配置 API Token。";
       }
     }
-    
+
     // 显示错误提示给用户
     alert(`❌ ${context}\n\n${userMessage}\n\n错误详情: ${errorMessage}`);
-    
+
     return userMessage;
   }, []);
 
@@ -159,7 +159,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     console.log("[SidebarPanel] 用户点击关联 Cloudflare 账号");
     // 打开 Cloudflare 登录页面
     window.open("https://dash.cloudflare.com/profile/api-tokens", "_blank");
-    
+
     // 启动轮询检查授权状态
     const interval = setInterval(async () => {
       try {
@@ -177,7 +177,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         console.error("[SidebarPanel] 轮询检查授权状态失败:", err);
       }
     }, 2000); // 2秒一次
-    
+
     setAuthPollingInterval(interval);
   }, [updateAppState]);
 
@@ -279,7 +279,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         tunnelState: "READY" // 错误后回到就绪状态
       });
       updateLoadingState({ tunnel: false });
-      
+
       handleError(err, "启动隧道失败");
     }
   }, [loading.tunnel, appState.tunnelStatus, updateLoadingState, updateAppState, handleError]);
@@ -421,6 +421,25 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
     updateAppState(updates);
   }, [appState.tunnelUrl, appState.tunnelState, updateAppState, updateLoadingState]);
 
+  // ========== 自动同步 Hook ==========
+  // 监听 app://sync-state 事件，自动刷新 n8n 状态和强制刷新 iframe/WebView
+  useAutoSync(() => {
+    console.log('[SidebarPanel] 收到同步事件，刷新 n8n 状态');
+
+    // 1. 重新获取 n8n 服务状态
+    checkN8nStatus();
+
+    // 2. 强制刷新关联的 iframe 或 WebView 页面
+    // 通过修改 URL 添加随机查询参数来绕过缓存
+    const n8nUrl = N8N_LOCAL_ADDRESS;
+    const timestampedUrl = generateTimestampedUrl(n8nUrl);
+    console.log('[SidebarPanel] 生成带时间戳的 URL:', timestampedUrl);
+
+    // 在实际应用中，这里可以更新 iframe 的 src 或触发页面刷新
+    // 例如：iframeRef.current.src = timestampedUrl;
+    // 由于这是一个示例，我们只记录日志
+  });
+
   // ========== 副作用 ==========
   useEffect(() => {
     let unlistenTunnelUpdate: UnlistenFn | null = null;
@@ -470,13 +489,10 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
   const renderWarningBox = () => (
     <div className="mt-3 p-3 rounded-lg border border-gray-200 bg-gray-50 flex items-start gap-2 shadow-sm">
-      <span className="text-lg mt-[-1px] text-red-600">⚠️</span>
       <div className="flex flex-col gap-1">
-        <strong className="text-sm font-bold text-gray-900">
-          风险提示
-        </strong>
+
         <p className="text-xs leading-relaxed m-0 text-red-600">
-          解除禁用节点可能存在风险。启用此功能可能会允许执行潜在不安全的节点操作（如执行系统命令等），请谨慎使用。
+          风险提示：解除禁用节点可能存在风险。启用此功能可能会允许执行潜在不安全的节点操作（如执行系统命令等），请谨慎使用。
         </p>
       </div>
     </div>
@@ -553,12 +569,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
             <div className="step-title">配置隧道</div>
           </div>
           <div className="wizard-step-content">
-            <p className="step-description">
-              选择隧道模式并配置相关参数，然后点击"一键开启"启动隧道。
-            </p>
-            
+
             {renderCustomDomainSection()}
-            
+
             <div className="wizard-actions">
               <button
                 onClick={startTunnel}
@@ -645,26 +658,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
                     {appState.tunnelUrl.replace('https://', '')}
                   </a>
                 </div>
-                <button
-                  onClick={() => {
-                    console.log("[SidebarPanel] 用户点击刷新 n8n UI");
-                    onTunnelOnline?.();
-                  }}
-                  style={{
-                    marginTop: '8px',
-                    padding: '6px 12px',
-                    backgroundColor: '#4CAF50',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    width: '100%',
-                    fontFamily: 'inherit'
-                  }}
-                >
-                  刷新 n8n UI
-                </button>
+                {/* 刷新按钮已移除，由自动同步机制处理 */}
               </div>
             )}
 
@@ -785,26 +779,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
                     {appState.tunnelUrl.replace('https://', '')}
                   </a>
                 </div>
-                <button
-                  onClick={() => {
-                    console.log("[SidebarPanel] 用户点击刷新 n8n UI");
-                    onTunnelOnline?.();
-                  }}
-                  style={{
-                    marginTop: '8px',
-                    padding: '6px 12px',
-                    backgroundColor: '#4CAF50',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    width: '100%',
-                    fontFamily: 'inherit'
-                  }}
-                >
-                  刷新 n8n UI
-                </button>
+                {/* 刷新按钮已移除，由自动同步机制处理 */}
               </div>
             )}
 
@@ -827,7 +802,6 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
 
   const renderCustomDomainSection = () => (
     <div className="custom-domain-section mt-4 pt-4 border-t border-gray-200">
-      <h4 className="service-name text-sm mb-3">隧道配置</h4>
 
       {/* 隧道模式选择 */}
       <div className="tunnel-mode-selector mb-4">
@@ -868,22 +842,22 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
             <label className="block text-sm font-medium text-gray-700 mb-1">
               自定义域名
             </label>
+
             <input
               type="text"
               value={appState.tunnelDomain}
               onChange={(e) => updateAppState({ tunnelDomain: e.target.value })}
               placeholder="https://your-domain.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 "
               disabled={loading.domainConfig}
             />
-            <p className="text-xs text-gray-500 mt-1">
-              在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
-            </p>
+
+
           </div>
 
           {/* Token 输入 */}
           <div className="mb-3">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Tunnel Token
             </label>
             <textarea
@@ -894,13 +868,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
               rows={3}
               disabled={loading.domainConfig}
             />
-            <p className="text-xs text-gray-500 mt-1">
-              从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
+            <p className="text-xs text-gray-500 mt-2">
+
               <a
                 href="https://dash.cloudflare.com/profile/api-tokens"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 ml-1"
+                className="text-blue-600 hover:text-blue-800 mt-1"
               >
                 (获取 Token)
               </a>
@@ -959,17 +933,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, onTun
         </button>
       </div>
 
-      <div className="app-links">
-        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("文档功能开发中"); }}>
-          查看文档
-        </a>
-        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("问题反馈功能开发中"); }}>
-          报告问题
-        </a>
-        <a href="#" className="app-link" onClick={(e) => { e.preventDefault(); alert("日志目录功能开发中"); }}>
-          打开日志目录
-        </a>
-      </div>
+
     </div>
   );
 

@@ -311,8 +311,32 @@ body {
   color: #dc2626;
 }
 
+.text-gray-500 {
+  color: #64748b;
+}
+
 .text-gray-600 {
   color: #475569;
+}
+
+.text-gray-700 {
+  color: #334155;
+}
+
+.text-gray-800 {
+  color: #1e293b;
+}
+
+.text-blue-600 {
+  color: #2563eb;
+}
+
+.text-red-700 {
+  color: #b91c1c;
+}
+
+.text-yellow-700 {
+  color: #b45309;
 }
 
 .tunnel-config {
@@ -1417,8 +1441,9 @@ input:disabled + .slider {
 
 /* 自定义域名配置区域调整 */
 .custom-domain-section {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 20px !important;
+  padding-top: 20px !important;
+  padding-bottom: 8px !important;
   border-top: 1px solid #e2e8f0;
 }
 
@@ -1428,7 +1453,7 @@ input:disabled + .slider {
 }
 
 .tunnel-mode-selector {
-  margin-bottom: 16px;
+  margin-bottom: 20px !important;
 }
 
 .tunnel-mode-selector .flex {
@@ -1464,4 +1489,29 @@ input:disabled + .slider {
   color: #64748b;
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* 表单元素间距优化 */
+.custom-domain-section > div {
+  margin-bottom: 16px !important;
+}
+
+.custom-domain-section label {
+  display: block !important;
+  margin-bottom: 8px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: #1f2937 !important;
+}
+
+.custom-domain-section input,
+.custom-domain-section textarea {
+  margin-bottom: 8px !important;
+}
+
+.custom-domain-section p {
+  margin-top: 6px !important;
+  margin-bottom: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
 }

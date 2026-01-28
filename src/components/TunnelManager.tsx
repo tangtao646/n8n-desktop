@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
+import { useAutoSync } from "../hooks/useAutoSync";
 
 // ========== 常量定义 ==========
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
@@ -264,6 +265,13 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
 
     notifyParent(newStatus, url);
   }, [notifyParent]);
+
+  // ========== 自动同步 Hook ==========
+  // 监听 app://sync-state 事件，自动重新加载隧道状态
+  useAutoSync(() => {
+    console.log('[TunnelManager] 收到同步事件，重新加载隧道状态');
+    loadTunnelState();
+  });
 
   // ========== 副作用 ==========
   useEffect(() => {

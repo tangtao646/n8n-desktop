@@ -4,6 +4,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useI18n } from "./i18n/context";
 import { CloudflaredVersionInfo } from "./components/TunnelManager";
 import SidebarPanel from "./components/SidebarPanel";
+import { useAutoSync } from "./hooks/useAutoSync";
 import "./App.css";
 
 type Status =
@@ -23,7 +24,7 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [iframeError, setIframeError] = useState(false);
-  const [iframeKey, setIframeKey] = useState(0);
+  const [iframeKey, setIframeKey] = useState(0); // 由自动同步机制处理 iframe 刷新
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     // 从 localStorage 读取保存的折叠状态，默认折叠为 true
     const saved = localStorage.getItem('sidebarCollapsed');
@@ -41,18 +42,18 @@ export default function App() {
     localStorage.setItem('sidebarCollapsed', newState.toString());
   };
 
-  // 刷新 iframe 的方法
+  // 刷新 iframe 的方法（由自动同步机制处理，不再需要手动调用）
   const refreshIframe = () => {
     console.log("[App] 准备刷新 iframe");
     setIframeLoaded(false);
     setIframeError(false);
-    
+
     // 等待 3-5 秒确保 n8n 完全启动，然后改变 key 会强制 React 重新挂载 iframe
     setTimeout(() => {
       console.log("[App] 执行 iframe 刷新 (延迟 5 秒后)");
       setIframeKey(prev => prev + 1);
     }, 5000);
-    
+
     // 添加超时检查，如果加载太久则提示
     setTimeout(() => {
       if (!iframeLoaded && !iframeError) {
@@ -60,6 +61,12 @@ export default function App() {
       }
     }, 15000);
   };
+
+  // 使用自动同步 Hook 监听 app://sync-state 事件，自动刷新 iframe
+  useAutoSync(() => {
+    console.log('[App] 收到自动同步事件，触发 iframe 刷新');
+    refreshIframe();
+  });
 
   // 通过 Tauri 代理检查 n8n 健康状态，添加超时和重试，增加对瞬态错误的容忍度
   const checkHealthViaProxy = async (): Promise<boolean> => {
@@ -339,7 +346,6 @@ export default function App() {
         <SidebarPanel
           collapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
-          onTunnelOnline={refreshIframe}
         />
 
         {/* 右侧 n8n Web UI */}
@@ -378,7 +384,7 @@ export default function App() {
           )}
 
           <iframe
-            key={`iframe-${iframeKey}`}
+            key={iframeKey}
             src="http://localhost:5678"
             className="webview-container"
             title="n8n Editor"

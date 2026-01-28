@@ -11,6 +11,8 @@ use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
 
+use super::utils::emit_global_sync;
+
 // --- 常量定义 ---
 
 /// 默认禁用的节点列表
@@ -565,6 +567,9 @@ pub async fn set_nodes_unlocked<R: Runtime>(
     match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
         Ok(_) => {
             println!("[DEBUG] n8n 已重启，节点解禁设置已应用");
+            
+            // 广播全局同步事件，通知前端刷新 UI
+            emit_global_sync(&app);
             Ok(())
         }
         Err(e) => {

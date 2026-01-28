@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::n8n_core::{construct_n8n_envs, shutdown_n8n};
+use super::utils::emit_global_sync;
 use crate::services::manager::{self, PROCESS_MANAGER};
 
 // --- 1. 数据结构定义 ---
@@ -260,6 +261,9 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
                 println!("[Tunnel] ✓ n8n 重启成功");
                 println!("[Tunnel] ✓ 新的 WEBHOOK_URL: {}", url);
                 println!("[Tunnel] ⚠️  请重新登录 n8n 以刷新 webhook 地址");
+                
+                // 广播全局同步事件，通知前端刷新 UI
+                emit_global_sync(app);
             }
             Err(e) => println!("[Tunnel] ✗ 启动失败: {}", e),
         }
@@ -535,6 +539,7 @@ pub async fn apply_tunnel_config<R: Runtime>(
     if PROCESS_MANAGER.lock().unwrap().has_child() {
         let url = TUNNEL_URL.lock().unwrap().clone().unwrap_or_default();
         restart_n8n_with_env(&app, &url);
+        // 注意：restart_n8n_with_env 内部已经包含 emit_global_sync 调用
     }
 
     Ok(())
