@@ -141,23 +141,48 @@ pub async fn get_nodes_unlocked() -> Result<bool, String> {
 #[tauri::command]
 pub async fn apply_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
-    tunnel_mode: String,
+    tunnel_mode: serde_json::Value, // 改为 serde_json::Value 以支持灵活的输入格式
     custom_domain: Option<String>,
     tunnel_token: Option<String>,
 ) -> Result<(), String> {
-    // 将字符串转换为 TunnelMode 枚举
-    let mode = match tunnel_mode.as_str() {
-        "temporary" => tunnel::TunnelMode::Temporary,
-        "token" => {
-            // 对于 Token 模式，需要 token 和 domain
-            let token = tunnel_token.ok_or("Token 模式需要提供 Cloudflare Tunnel Token")?;
-            let domain = custom_domain.clone().ok_or("Token 模式需要提供自定义域名")?;
-            tunnel::TunnelMode::Token {
-                token,
-                domain,
+    // 将 serde_json::Value 转换为 TunnelMode 枚举
+    let mode = match tunnel_mode {
+        // 处理字符串格式："Temporary"
+        serde_json::Value::String(s) => {
+            match s.as_str() {
+                "Temporary" | "temporary" => tunnel::TunnelMode::Temporary,
+                "Token" | "token" => {
+                    let token = tunnel_token.ok_or("Token 模式需要提供 Cloudflare Tunnel Token")?;
+                    let domain = custom_domain.clone().ok_or("Token 模式需要提供自定义域名")?;
+                    tunnel::TunnelMode::Token {
+                        token,
+                        domain,
+                    }
+                }
+                _ => return Err(format!("未知的隧道模式: {}", s)),
             }
         }
-        _ => return Err(format!("未知的隧道模式: {}", tunnel_mode)),
+        // 处理对象格式：{ Token: { token, domain } }
+        serde_json::Value::Object(obj) => {
+            if let Some(token_obj) = obj.get("Token") {
+                if let Some(token_data) = token_obj.as_object() {
+                    let token = token_data.get("token")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Token 对象必须包含 'token' 字段")?
+                        .to_string();
+                    let domain = token_data.get("domain")
+                        .and_then(|v| v.as_str())
+                        .ok_or("Token 对象必须包含 'domain' 字段")?
+                        .to_string();
+                    tunnel::TunnelMode::Token { token, domain }
+                } else {
+                    return Err("Token 字段必须是一个对象".to_string());
+                }
+            } else {
+                return Err("隧道模式对象必须包含 'Token' 或其他有效字段".to_string());
+            }
+        }
+        _ => return Err("隧道模式必须是字符串或对象".to_string()),
     };
     
     tunnel::apply_tunnel_config(

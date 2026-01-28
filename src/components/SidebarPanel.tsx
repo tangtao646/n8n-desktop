@@ -36,7 +36,7 @@ interface CloudflaredVersionInfo {
 interface TunnelConfig {
   custom_domain?: string;
   use_custom_domain?: boolean;
-  tunnel_mode?: "temporary" | "token";
+  tunnel_mode?: any; // 支持 Temporary 字符串或 Token 对象
   tunnel_token?: string;
   [key: string]: unknown;
 }
@@ -90,8 +90,19 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     tunnelDomain: "",
     tunnelMode: "temporary",
     tunnelToken: "",
-    tunnelState: "READY", // 初始状态为就绪（无需授权）
+    tunnelState: "READY",
   });
+
+  // 从后端返回的 tunnelMode 中提取 token 和 domain（Token 模式）
+  const extractTokenModeConfig = (tunnelMode: any) => {
+    if (tunnelMode && typeof tunnelMode === "object" && tunnelMode.Token) {
+      return {
+        token: tunnelMode.Token.token || "",
+        domain: tunnelMode.Token.domain || "",
+      };
+    }
+    return null;
+  };
 
   const [loading, setLoading] = useState<LoadingState>({
     tunnel: false,
@@ -113,6 +124,36 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   const getTunnelStatusDisplay = useCallback((status: TunnelStatus) => {
     return TUNNEL_STATUS_MAP[status] || { text: "未知状态", color: "text-gray-600" };
   }, []);
+
+  // 检查当前隧道模式配置是否有效
+  const isTunnelConfigValid = useCallback(() => {
+    if (appState.tunnelMode === "temporary") {
+      // Temporary 模式无需额外配置
+      return true;
+    } else if (appState.tunnelMode === "token") {
+      // Token 模式需要检查 domain 和 token 都不为空
+      const tokenTrimmed = appState.tunnelToken.trim();
+      const domainTrimmed = appState.tunnelDomain.trim();
+      
+      // 检查基本的非空条件
+      if (!tokenTrimmed || !domainTrimmed) {
+        return false;
+      }
+      
+      // 检查 token 长度（Cloudflare Token 通常很长）
+      if (tokenTrimmed.length < 50) {
+        return false;
+      }
+      
+      // 检查 domain 格式（必须包含 :// ）
+      if (!domainTrimmed.includes("://")) {
+        return false;
+      }
+      
+      return true;
+    }
+    return false;
+  }, [appState.tunnelMode, appState.tunnelToken, appState.tunnelDomain]);
 
   const updateLoadingState = useCallback((updates: Partial<LoadingState>) => {
     setLoading(prev => ({ ...prev, ...updates }));
@@ -199,11 +240,26 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       // 加载隧道配置
       try {
         const config = await invoke<TunnelConfig>("get_tunnel_config");
-        if (config.custom_domain) {
-          updateAppState({ tunnelDomain: config.custom_domain });
-        }
+        console.log("[SidebarPanel] Loaded tunnel config:", config);
+        
+        // 处理 Token 模式：从 tunnelMode 中提取 token 和 domain
         if (config.tunnel_mode) {
-          updateAppState({ tunnelMode: config.tunnel_mode });
+          const tokenModeConfig = extractTokenModeConfig(config.tunnel_mode);
+          if (tokenModeConfig) {
+            console.log("[SidebarPanel] Extracted Token mode config:", tokenModeConfig);
+            updateAppState({
+              tunnelMode: "token",
+              tunnelToken: tokenModeConfig.token,
+              tunnelDomain: tokenModeConfig.domain,
+            });
+          } else if (config.tunnel_mode === "temporary" || config.tunnel_mode === "Temporary") {
+            updateAppState({ tunnelMode: "temporary" });
+          }
+        }
+        
+        // 兼容旧格式的 custom_domain 字段
+        if (config.custom_domain && !config.tunnel_mode) {
+          updateAppState({ tunnelDomain: config.custom_domain });
         }
         if (config.tunnel_token) {
           updateAppState({ tunnelToken: config.tunnel_token });
@@ -231,13 +287,32 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   const startTunnel = useCallback(async () => {
     if (loading.tunnel) return;
 
+    // 再次检查配置有效性（防止竞态条件）
+    if (!isTunnelConfigValid()) {
+      alert("❌ 启动隧道失败\n\n请确保隧道配置完整且有效");
+      return;
+    }
+
     updateLoadingState({ tunnel: true });
     updateAppState({
       tunnelStatus: "connecting",
-      tunnelState: "STARTING" // 切换到启动中状态
+      tunnelState: "STARTING"
     });
 
     try {
+      // 首先，确保当前的隧道模式配置已保存
+      const tunnelModeToSave = appState.tunnelMode === "token"
+        ? { Token: { token: appState.tunnelToken.trim(), domain: appState.tunnelDomain.trim() } }
+        : "Temporary";
+      
+      console.log("[SidebarPanel] 在启动前应用隧道配置:", tunnelModeToSave);
+      
+      await invoke("apply_tunnel_config", {
+        tunnelMode: tunnelModeToSave,
+        customDomain: appState.tunnelDomain.trim() || null,
+        tunnelToken: appState.tunnelToken.trim() || null,
+      });
+
       const versionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
       let cloudflaredPath = CLOUDFLARED_DEFAULT_PATH;
 
@@ -269,20 +344,20 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           updateLoadingState({ tunnel: false });
           updateAppState({
             tunnelStatus: "offline",
-            tunnelState: "READY" // 超时后回到就绪状态
+            tunnelState: "READY"
           });
         }
       }, TUNNEL_START_TIMEOUT_MS);
     } catch (err) {
       updateAppState({
         tunnelStatus: "error",
-        tunnelState: "READY" // 错误后回到就绪状态
+        tunnelState: "READY"
       });
       updateLoadingState({ tunnel: false });
 
       handleError(err, "启动隧道失败");
     }
-  }, [loading.tunnel, appState.tunnelStatus, updateLoadingState, updateAppState, handleError]);
+  }, [loading.tunnel, appState.tunnelStatus, appState.tunnelMode, appState.tunnelToken, appState.tunnelDomain, isTunnelConfigValid, updateLoadingState, updateAppState, handleError]);
 
   const stopTunnel = useCallback(async () => {
     if (loading.tunnel) return;
@@ -341,8 +416,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         }
       }
 
+      // 构建 tunnelMode 对象
+      const tunnelModeToSave = appState.tunnelMode === "token"
+        ? { Token: { token: tokenToSave, domain: domainToSave } }
+        : "Temporary";
+      
       await invoke("apply_tunnel_config", {
-        tunnelMode: appState.tunnelMode,
+        tunnelMode: tunnelModeToSave,
         customDomain: domainToSave || null,
         tunnelToken: tokenToSave || null,
       });
@@ -575,8 +655,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
             <div className="wizard-actions">
               <button
                 onClick={startTunnel}
-                disabled={loading.tunnel}
+                disabled={loading.tunnel || !isTunnelConfigValid()}
                 className="wizard-primary-btn"
+                title={!isTunnelConfigValid() && appState.tunnelMode === "token" ? "请填写完整的自定义域名和 Token" : ""}
               >
                 {loading.tunnel ? "启动中..." : "一键开启隧道"}
               </button>
