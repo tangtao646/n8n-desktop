@@ -888,17 +888,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
               rows={3}
               disabled={loading.domainConfig}
             />
-            <p className="text-xs text-gray-500 mt-2">
 
-              <a
-                href="https://dash.cloudflare.com/profile/api-tokens"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 mt-1"
-              >
-                {t("ui.get_token")}
-              </a>
-            </p>
           </div>
 
           {/* 保存按钮 */}
@@ -1002,7 +992,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         </div>
 
         {/* 应用设置 & 关于区域 */}
-        {renderAppInfoSection()}
+        {/* {renderAppInfoSection()} */}
       </div>
 
       {/* 底部状态栏 */}

@@ -4,6 +4,8 @@
 
 一个基于 Tauri 构建的 n8n 桌面应用程序，提供跨平台的本地工作流自动化体验。本项目旨在简化 n8n 的安装和使用，实现一键安装：无需手动配置 Node.js 环境，无需安装 Docker。
 
+![Application Screenshot](app_screen_short.png)
+
 ## 📋 重要声明
 
 ### 版权与使用声明
@@ -39,8 +41,36 @@
 - **跨平台支持**: Windows、macOS、Linux 全平台
 - **自动下载依赖**: 首次运行自动下载 Node.js 运行时和 n8n 核心包
 - **离线使用**: 本地运行，保护数据隐私
+- **手动解禁节点**: 内置支持启用受限节点（如 ExecuteCommand），用于高级工作流自动化
+- **Cloudflared 隧道集成**: 创建安全隧道以暴露本地 n8n 实例，支持临时或自定义域名隧道
 
+## 🌐 Cloudflared 隧道功能
 
+应用程序集成了 Cloudflare Tunnel 功能，可安全地将本地 n8n 实例暴露到互联网。
+
+### 隧道类型
+
+1. **临时隧道**
+   - 一键创建隧道，使用随机生成的子域名
+   - 无需 Cloudflare 账户
+   - 适合快速测试和临时访问
+
+2. **固定域名隧道**
+   - 使用您自己的自定义域名（需配置 Cloudflare）
+   - 需要 Cloudflare 账户和域名配置
+   - 为 n8n 实例提供持久、品牌化的 URL
+
+### Cloudflared 使用指南
+
+详细设置说明和官方文档请参考：
+- [Cloudflare Tunnel 官方文档](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+- [通过仪表板创建隧道](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/)
+- [Cloudflared CLI 参考](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/use-cases/access/)
+
+### 安全注意事项
+- 所有隧道均通过 Cloudflare 基础设施进行端到端加密
+- 临时隧道在会话结束后自动过期
+- 生产环境使用时，请配置适当的身份验证和访问控制
 
 ## 📦 下载安装
 

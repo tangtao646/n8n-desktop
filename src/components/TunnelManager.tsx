@@ -497,17 +497,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                   rows={3}
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  {t("ui.associate_cloudflare_account")}
-                  <a
-                    href="https://dash.cloudflare.com/profile/api-tokens"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 ml-1"
-                  >
-                    ({t("ui.get_token")})
-                  </a>
-                </p>
+
               </div>
             </>
           )}

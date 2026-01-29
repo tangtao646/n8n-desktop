@@ -4,6 +4,8 @@
 
 A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience. This project aims to simplify n8n installation and usage, offering one-click installation: no manual Node.js environment configuration required, no Docker installation needed.
 
+![Application Screenshot](app_screen_short.png)
+
 ## 📋 Important Notice
 
 ### Copyright and Usage Statement
@@ -39,6 +41,36 @@ The developers of this project are not responsible for any data loss caused by u
 - **Cross-Platform Support**: Windows, macOS, Linux full platform support
 - **Automatic Dependency Download**: Automatically downloads Node.js runtime and n8n core packages on first run
 - **Offline Usage**: Runs locally, protects data privacy
+- **Manual Node Unblocking**: Built-in support for enabling restricted nodes (e.g., ExecuteCommand) for advanced workflow automation
+- **Cloudflared Tunnel Integration**: Create secure tunnels to expose local n8n instances with temporary or custom domain tunnels
+
+## 🌐 Cloudflared Tunnel Features
+
+The application includes integrated Cloudflare Tunnel functionality for securely exposing your local n8n instance to the internet.
+
+### Tunnel Types
+
+1. **Temporary Tunnels**
+   - One-click tunnel creation with randomly generated subdomains
+   - No Cloudflare account required
+   - Ideal for quick testing and temporary access
+
+2. **Fixed Domain Tunnels**
+   - Use your own custom domain with Cloudflare
+   - Requires Cloudflare account and domain configuration
+   - Provides persistent, branded URLs for your n8n instance
+
+### Getting Started with Cloudflared
+
+For detailed setup instructions and official documentation, refer to:
+- [Cloudflare Tunnel Official Documentation](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+- [Creating a Tunnel via Dashboard](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/)
+- [Cloudflared CLI Reference](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/use-cases/access/)
+
+### Security Notes
+- All tunnels are encrypted end-to-end using Cloudflare's infrastructure
+- Temporary tunnels automatically expire after session ends
+- For production use, configure proper authentication and access controls
 
 ## 📦 Download & Installation
 
