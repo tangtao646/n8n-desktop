@@ -8,7 +8,6 @@ import { useI18n } from "../i18n/context";
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
 const TUNNEL_START_TIMEOUT_MS = 60000;
 const TUNNEL_STOP_TIMEOUT_MS = 5000;
-const UPDATE_CHECK_DELAY_MS = 1500;
 const N8N_LOCAL_ADDRESS = "http://localhost:5678";
 const DEFAULT_APP_VERSION = "1.0.2";
 
@@ -413,20 +412,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     }
   }, [loading.domainConfig, appState.tunnelDomain, appState.tunnelMode, appState.tunnelToken, updateLoadingState, handleError]);
 
-  const checkForUpdates = useCallback(async () => {
-    if (loading.update) return;
 
-    updateLoadingState({ update: true });
-
-    try {
-      await new Promise(resolve => setTimeout(resolve, UPDATE_CHECK_DELAY_MS));
-      alert("✅ 检查更新完成\n\n当前已是最新版本");
-    } catch (err) {
-      handleError(err, "检查更新失败");
-    } finally {
-      updateLoadingState({ update: false });
-    }
-  }, [loading.update, updateLoadingState, handleError]);
 
   const toggleNodeUnblock = useCallback(async (enabled: boolean) => {
     try {
@@ -917,36 +903,6 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     </div>
   );
 
-  const renderAppInfoSection = () => (
-    <div className="app-info-section">
-      <h3 className="section-title">{t("ui.app_info")}</h3>
-
-      <div className="app-info-card">
-        <div className="version-info">
-          <div className="version-label">{t("ui.current_version")}</div>
-          <div className="version-value">v{appVersion}</div>
-        </div>
-
-        <button
-          onClick={checkForUpdates}
-
-          disabled={loading.update}
-          className="check-update-btn"
-        >
-          {loading.update ? (
-            <>
-              <svg className="spinner" width="16" height="16" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              </svg>
-              {t("ui.checking")}
-            </>
-          ) : t("ui.check_for_updates")}
-        </button>
-      </div>
-
-
-    </div>
-  );
 
   const renderFooter = () => (
     <div className="sidebar-footer-minimal">
