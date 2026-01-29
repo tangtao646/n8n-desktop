@@ -81,7 +81,7 @@ pub async fn download_cloudflared<R: Runtime>(
 pub async fn check_cloudflared_version<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<CloudflaredVersionInfo, String> {
-    cloudflared::check_cloudflared_version(app).await
+    cloudflared::check_cloudflared_version(app)
 }
 
 /// 向后兼容的包装函数 - 获取隧道配置
