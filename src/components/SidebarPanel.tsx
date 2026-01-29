@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
 import { useAutoSync, generateTimestampedUrl } from "../hooks/useAutoSync";
+import { useI18n } from "../i18n/context";
 
 // ========== 常量定义 ==========
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
@@ -16,7 +17,7 @@ type TunnelStatus = "offline" | "connecting" | "online" | "error";
 type N8nStatus = "running" | "stopped" | "starting";
 
 // 隧道状态机
-type TunnelState = "UNAUTHORIZED" | "READY" | "STARTING" | "RUNNING";
+type TunnelState = "READY" | "STARTING" | "RUNNING";
 
 interface TunnelEventPayload {
   status: string;
@@ -66,21 +67,12 @@ type AppState = {
 };
 
 // ========== 状态映射 ==========
-const N8N_STATUS_MAP: Record<N8nStatus, { text: string; color: string }> = {
-  running: { text: "运行中", color: "text-green-600" },
-  stopped: { text: "已停止", color: "text-red-600" },
-  starting: { text: "启动中", color: "text-yellow-600" },
-};
-
-const TUNNEL_STATUS_MAP: Record<TunnelStatus, { text: string; color: string }> = {
-  offline: { text: "隧道已关闭", color: "text-gray-600" },
-  connecting: { text: "隧道连接中...", color: "text-yellow-600" },
-  online: { text: "隧道已连接", color: "text-green-600" },
-  error: { text: "隧道错误", color: "text-red-600" },
-};
+// 这些映射现在将在组件内部使用翻译
 
 // ========== 主组件 ==========
 export default function SidebarPanel({ collapsed = false, onToggleSidebar, className = "" }: SidebarPanelProps) {
+  const { t } = useI18n();
+
   // ========== 状态定义 ==========
   const [appState, setAppState] = useState<AppState>({
     tunnelStatus: "offline",
@@ -111,19 +103,30 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     domainConfig: false,
   });
 
-  const [authPollingInterval, setAuthPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  // const [authPollingInterval, setAuthPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
   const [appVersion] = useState<string>(DEFAULT_APP_VERSION);
 
   // ========== 工具函数 ==========
   const getN8nStatusDisplay = useCallback((status: N8nStatus) => {
-    return N8N_STATUS_MAP[status] || { text: "未知", color: "text-gray-600" };
-  }, []);
+    const statusMap: Record<N8nStatus, { text: string; color: string }> = {
+      running: { text: t("ui.enabled"), color: "text-green-600" },
+      stopped: { text: t("ui.disabled"), color: "text-red-600" },
+      starting: { text: t("ui.starting"), color: "text-yellow-600" },
+    };
+    return statusMap[status] || { text: t("ui.disabled"), color: "text-gray-600" };
+  }, [t]);
 
   const getTunnelStatusDisplay = useCallback((status: TunnelStatus) => {
-    return TUNNEL_STATUS_MAP[status] || { text: "未知状态", color: "text-gray-600" };
-  }, []);
+    const statusMap: Record<TunnelStatus, { text: string; color: string }> = {
+      offline: { text: t("ui.disabled"), color: "text-gray-600" },
+      connecting: { text: t("ui.starting"), color: "text-yellow-600" },
+      online: { text: t("ui.enabled"), color: "text-green-600" },
+      error: { text: t("messages.tunnel_start_failed"), color: "text-red-600" },
+    };
+    return statusMap[status] || { text: t("ui.disabled"), color: "text-gray-600" };
+  }, [t]);
 
   // 检查当前隧道模式配置是否有效
   const isTunnelConfigValid = useCallback(() => {
@@ -134,22 +137,22 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       // Token 模式需要检查 domain 和 token 都不为空
       const tokenTrimmed = appState.tunnelToken.trim();
       const domainTrimmed = appState.tunnelDomain.trim();
-      
+
       // 检查基本的非空条件
       if (!tokenTrimmed || !domainTrimmed) {
         return false;
       }
-      
+
       // 检查 token 长度（Cloudflare Token 通常很长）
       if (tokenTrimmed.length < 50) {
         return false;
       }
-      
+
       // 检查 domain 格式（必须包含 :// ）
       if (!domainTrimmed.includes("://")) {
         return false;
       }
-      
+
       return true;
     }
     return false;
@@ -195,41 +198,16 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     return userMessage;
   }, []);
 
-  // 关联 Cloudflare 账号
-  const associateCloudflareAccount = useCallback(async () => {
-    console.log("[SidebarPanel] 用户点击关联 Cloudflare 账号");
-    // 打开 Cloudflare 登录页面
-    window.open("https://dash.cloudflare.com/profile/api-tokens", "_blank");
 
-    // 启动轮询检查授权状态
-    const interval = setInterval(async () => {
-      try {
-        const isAuthorized = await invoke<boolean>("check_auth_status");
-        console.log("[SidebarPanel] 轮询检查授权状态:", isAuthorized);
-        if (isAuthorized) {
-          // 停止轮询
-          clearInterval(interval);
-          setAuthPollingInterval(null);
-          // 更新状态为 READY
-          updateAppState({ tunnelState: "READY" });
-          console.log("[SidebarPanel] 授权成功，状态切换为 READY");
-        }
-      } catch (err) {
-        console.error("[SidebarPanel] 轮询检查授权状态失败:", err);
-      }
-    }, 2000); // 2秒一次
-
-    setAuthPollingInterval(interval);
-  }, [updateAppState]);
 
   // 清理轮询定时器
-  useEffect(() => {
-    return () => {
-      if (authPollingInterval) {
-        clearInterval(authPollingInterval);
-      }
-    };
-  }, [authPollingInterval]);
+  // useEffect(() => {
+  //   return () => {
+  //     if (authPollingInterval) {
+  //       clearInterval(authPollingInterval);
+  //     }
+  //   };
+  // }, [authPollingInterval]);
 
   // ========== 核心逻辑函数 ==========
   const loadAppInfo = useCallback(async () => {
@@ -241,7 +219,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       try {
         const config = await invoke<TunnelConfig>("get_tunnel_config");
         console.log("[SidebarPanel] Loaded tunnel config:", config);
-        
+
         // 处理 Token 模式：从 tunnelMode 中提取 token 和 domain
         if (config.tunnel_mode) {
           const tokenModeConfig = extractTokenModeConfig(config.tunnel_mode);
@@ -256,7 +234,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
             updateAppState({ tunnelMode: "temporary" });
           }
         }
-        
+
         // 兼容旧格式的 custom_domain 字段
         if (config.custom_domain && !config.tunnel_mode) {
           updateAppState({ tunnelDomain: config.custom_domain });
@@ -304,9 +282,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       const tunnelModeToSave = appState.tunnelMode === "token"
         ? { Token: { token: appState.tunnelToken.trim(), domain: appState.tunnelDomain.trim() } }
         : "Temporary";
-      
+
       console.log("[SidebarPanel] 在启动前应用隧道配置:", tunnelModeToSave);
-      
+
       await invoke("apply_tunnel_config", {
         tunnelMode: tunnelModeToSave,
         customDomain: appState.tunnelDomain.trim() || null,
@@ -420,7 +398,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       const tunnelModeToSave = appState.tunnelMode === "token"
         ? { Token: { token: tokenToSave, domain: domainToSave } }
         : "Temporary";
-      
+
       await invoke("apply_tunnel_config", {
         tunnelMode: tunnelModeToSave,
         customDomain: domainToSave || null,
@@ -572,51 +550,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="flex flex-col gap-1">
 
         <p className="text-xs leading-relaxed m-0 text-red-600">
-          风险提示：解除禁用节点可能存在风险。启用此功能可能会允许执行潜在不安全的节点操作（如执行系统命令等），请谨慎使用。
+          {t("ui.risk_warning")}
         </p>
       </div>
     </div>
   );
 
   // ========== 隧道状态渲染函数 ==========
-  const renderUnauthorizedState = () => (
-    <div className="service-card">
-      <div className="service-header">
-        <div className="service-info">
-          <h4 className="service-name">Cloudflare 隧道</h4>
-          <span className="service-status text-red-600">
-            未授权
-          </span>
-        </div>
-      </div>
-
-      <div className="tunnel-wizard-step">
-        <div className="wizard-step-header">
-          <div className="step-number">1</div>
-          <div className="step-title">关联 Cloudflare 账号</div>
-        </div>
-        <div className="wizard-step-content">
-          <p className="step-description">
-            使用 Cloudflare 账号授权，以便创建和管理隧道。点击下方按钮前往 Cloudflare 仪表盘生成 API Token。
-          </p>
-          <button
-            onClick={associateCloudflareAccount}
-            className="wizard-primary-btn"
-            disabled={!!authPollingInterval}
-          >
-            {authPollingInterval ? "等待授权中..." : "关联 Cloudflare 账号"}
-          </button>
-          {authPollingInterval && (
-            <div className="auth-polling-info">
-              <div className="spinner-small"></div>
-              <span className="polling-text">正在检查授权状态...</span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
   const renderReadyState = () => {
     const { text, color } = getTunnelStatusDisplay(appState.tunnelStatus);
     const isTunnelActive = appState.tunnelStatus === "online" || appState.tunnelStatus === "connecting";
@@ -625,7 +565,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="service-card">
         <div className="service-header">
           <div className="service-info">
-            <h4 className="service-name">Cloudflare 隧道</h4>
+            <h4 className="service-name">{t("ui.tunnel")}</h4>
             <span className={`service-status ${color}`}>
               {text}
             </span>
@@ -646,7 +586,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         <div className="tunnel-wizard-step">
           <div className="wizard-step-header">
             <div className="step-number">2</div>
-            <div className="step-title">配置隧道</div>
+            <div className="step-title">{t("ui.configure_tunnel")}</div>
           </div>
           <div className="wizard-step-content">
 
@@ -657,9 +597,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                 onClick={startTunnel}
                 disabled={loading.tunnel || !isTunnelConfigValid()}
                 className="wizard-primary-btn"
-                title={!isTunnelConfigValid() && appState.tunnelMode === "token" ? "请填写完整的自定义域名和 Token" : ""}
+                title={!isTunnelConfigValid() && appState.tunnelMode === "token" ? t("messages.config_validation_failed") : ""}
               >
-                {loading.tunnel ? "启动中..." : "一键开启隧道"}
+                {loading.tunnel ? t("ui.starting") : t("ui.start_tunnel_with_one_click")}
               </button>
             </div>
           </div>
@@ -672,9 +612,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     <div className="service-card">
       <div className="service-header">
         <div className="service-info">
-          <h4 className="service-name">Cloudflare 隧道</h4>
+          <h4 className="service-name">{t("ui.tunnel")}</h4>
           <span className="service-status text-yellow-600">
-            启动中
+            {t("ui.starting")}
           </span>
         </div>
       </div>
@@ -682,13 +622,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="tunnel-wizard-step">
         <div className="wizard-step-header">
           <div className="step-number">3</div>
-          <div className="step-title">正在启动隧道</div>
+          <div className="step-title">{t("ui.starting")}</div>
         </div>
         <div className="wizard-step-content">
           <div className="loading-indicator">
             <div className="spinner-large"></div>
-            <p className="loading-text">正在创建隧道并配置 DNS...</p>
-            <p className="loading-subtext">这可能需要几秒钟时间</p>
+            <p className="loading-text">{t("ui.creating_tunnel_configuring_dns")}</p>
+            <p className="loading-subtext">{t("ui.may_take_few_seconds")}</p>
           </div>
         </div>
       </div>
@@ -702,7 +642,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="service-card">
         <div className="service-header">
           <div className="service-info">
-            <h4 className="service-name">Cloudflare 隧道</h4>
+            <h4 className="service-name">{t("ui.tunnel")}</h4>
             <span className={`service-status ${color}`}>
               {text}
             </span>
@@ -723,12 +663,12 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         <div className="tunnel-wizard-step">
           <div className="wizard-step-header">
             <div className="step-number">4</div>
-            <div className="step-title">隧道运行中</div>
+            <div className="step-title">{t("ui.tunnel_running")}</div>
           </div>
           <div className="wizard-step-content">
             {appState.tunnelStatus === "online" && appState.tunnelUrl && (
               <div className="tunnel-url-section">
-                <div className="tunnel-url-label">公网地址:</div>
+                <div className="tunnel-url-label">{t("ui.public_address")}</div>
                 <div className="tunnel-url-value">
                   <a
                     href={appState.tunnelUrl}
@@ -745,11 +685,11 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
             {cloudflaredInfo && (
               <div className="cloudflared-info">
-                <span className="info-label">cloudflared:</span>
+                <span className="info-label">{t("ui.cloudflared")}</span>
                 <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
                   {cloudflaredInfo.installed
-                    ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
-                    : "未安装 (点击隧道开关将自动下载)"}
+                    ? `${t("ui.installed")} ${cloudflaredInfo.version || t("ui.disabled")}`
+                    : t("ui.not_installed_click_to_download")}
                 </span>
               </div>
             )}
@@ -769,13 +709,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           {/* n8n 服务状态 */}
           <div className="service-item">
             <div className="service-item-header">
-              <span className="item-label">n8n 服务</span>
+              <span className="item-label">{t("ui.n8n_service")}</span>
               <span className={`service-status ${n8nColor}`}>
                 {n8nText}
               </span>
             </div>
             <div className="service-address">
-              <span className="address-label">本地地址:</span>
+              <span className="address-label">{t("ui.local_address")}</span>
               <span className="address-value">{N8N_LOCAL_ADDRESS}</span>
             </div>
           </div>
@@ -786,10 +726,10 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           {/* 节点解禁 */}
           <div className="service-item">
             <div className="service-item-header">
-              <span className="item-label">节点解禁</span>
+              <span className="item-label">{t("ui.node_unblock")}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span className="service-status text-yellow-600">
-                  {appState.nodeUnblockEnabled ? "已启用" : "已禁用"}
+                  {appState.nodeUnblockEnabled ? t("ui.enabled") : t("ui.disabled")}
                 </span>
                 <label className="switch">
                   <input
@@ -812,8 +752,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   const renderTunnelCard = () => {
     // 根据隧道状态机渲染不同的UI
     switch (appState.tunnelState) {
-      case "UNAUTHORIZED":
-        return renderUnauthorizedState();
+
       case "READY":
         return renderReadyState();
       case "STARTING":
@@ -904,14 +843,14 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                 transition: "all 0.2s",
               }}
             >
-              {mode === "temporary" && "随机临时域名"}
-              {mode === "token" && "固定自定义域名"}
+              {mode === "temporary" && t("ui.random_temporary_domain")}
+              {mode === "token" && t("ui.fixed_custom_domain")}
             </button>
           ))}
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          {appState.tunnelMode === "temporary" && "每次启动随机生成临时公网地址"}
-          {appState.tunnelMode === "token" && "使用 Cloudflare Tunnel Token 建立固定隧道"}
+          {appState.tunnelMode === "temporary" && t("ui.random_temporary_domain_desc")}
+          {appState.tunnelMode === "token" && t("ui.fixed_custom_domain_desc")}
         </p>
       </div>
 
@@ -921,7 +860,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           {/* Domain 输入 */}
           <div className="mb-3">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              自定义域名
+              {t("ui.custom_domain")}
             </label>
 
             <input
@@ -939,12 +878,12 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           {/* Token 输入 */}
           <div className="mb-3">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Tunnel Token
+              {t("ui.tunnel_token")}
             </label>
             <textarea
               value={appState.tunnelToken}
               onChange={(e) => updateAppState({ tunnelToken: e.target.value })}
-              placeholder="粘贴您的 Cloudflare Tunnel Token..."
+              placeholder={t("ui.paste_tunnel_token")}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
               rows={3}
               disabled={loading.domainConfig}
@@ -957,7 +896,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:text-blue-800 mt-1"
               >
-                (获取 Token)
+                {t("ui.get_token")}
               </a>
             </p>
           </div>
@@ -980,7 +919,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                 transition: "background-color 0.2s",
               }}
             >
-              {loading.domainConfig ? "保存中..." : "保存配置"}
+              {loading.domainConfig ? t("ui.saving") : t("ui.save_config")}
             </button>
           </div>
         </>
@@ -990,16 +929,17 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
   const renderAppInfoSection = () => (
     <div className="app-info-section">
-      <h3 className="section-title">应用信息</h3>
+      <h3 className="section-title">{t("ui.app_info")}</h3>
 
       <div className="app-info-card">
         <div className="version-info">
-          <div className="version-label">当前版本</div>
+          <div className="version-label">{t("ui.current_version")}</div>
           <div className="version-value">v{appVersion}</div>
         </div>
 
         <button
           onClick={checkForUpdates}
+
           disabled={loading.update}
           className="check-update-btn"
         >
@@ -1008,9 +948,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
               <svg className="spinner" width="16" height="16" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               </svg>
-              检查中...
+              {t("ui.checking")}
             </>
-          ) : "检查更新"}
+          ) : t("ui.check_for_updates")}
         </button>
       </div>
 
@@ -1037,7 +977,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       {/* 顶部标题栏 */}
       <div className="sidebar-header">
         <div className="sidebar-title">
-          <h2 className="text-lg font-bold">n8n Desktop</h2>
+          <h2 className="text-lg font-bold">{t("app.title")}</h2>
           <span className="text-xs text-gray-500">v{appVersion}</span>
         </div>
         <button
@@ -1056,7 +996,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       <div className="sidebar-content-single">
         {/* 服务控制区域 */}
         <div className="service-control-section">
-          <h3 className="section-title">服务配置</h3>
+          <h3 className="section-title">{t("ui.service_configuration")}</h3>
           {renderServiceStatusCard()}
           {renderTunnelCard()}
         </div>

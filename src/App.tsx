@@ -120,7 +120,7 @@ export default function App() {
     let currentDownloadType = "";
     let lastProgressUpdate = 0;
     const PROGRESS_DEBOUNCE_MS = 100;
-    
+
     // 用于跟踪是否已经成功（防止重复设置 ready 状态）
     let hasSucceeded = false;
 
@@ -282,13 +282,13 @@ export default function App() {
           if (!hasSucceeded && checkTimer) {
             console.log("Startup timeout triggered, current status:", status);
             console.log("checkTimer is:", checkTimer);
-            
+
             // 提供更详细的错误信息
             let detailedError = t("errors.startup_timeout");
             if (status === "preparing_engine" || status === "downloading_n8n" || status === "preparing_tunnel") {
-              detailedError = "网络下载超时，请检查网络连接或尝试使用VPN";
+              detailedError = t("errors.network_timeout");
             } else if (status === "starting") {
-              detailedError = "n8n服务启动超时，请检查端口5678是否被占用或服务启动过慢";
+              detailedError = t("errors.service_start_timeout");
             }
             setErrorMsg(detailedError);
             setStatus("error");
@@ -353,15 +353,15 @@ export default function App() {
           {!iframeLoaded && !iframeError && (
             <div className="iframe-loading">
               <div className="loading-spinner"></div>
-              <p>正在加载 n8n 界面...</p>
+              <p>{t("ui.loading_n8n_interface")}</p>
             </div>
           )}
 
           {iframeError && (
             <div className="iframe-fallback">
               <div className="fallback-content">
-                <h3>无法加载 n8n 界面</h3>
-                <p>请确保 n8n 服务正在运行在 localhost:5678</p>
+                <h3>{t("ui.cannot_load_n8n_interface")}</h3>
+                <p>{t("ui.ensure_n8n_running")}</p>
                 <div className="fallback-actions">
                   <button
                     onClick={() => {
@@ -370,13 +370,13 @@ export default function App() {
                     }}
                     className="action-btn primary"
                   >
-                    重试
+                    {t("app.retry")}
                   </button>
                   <button
                     onClick={() => window.open("http://localhost:5678", "_blank")}
                     className="action-btn secondary"
                   >
-                    在新窗口中打开
+                    {t("ui.open_in_new_window")}
                   </button>
                 </div>
               </div>

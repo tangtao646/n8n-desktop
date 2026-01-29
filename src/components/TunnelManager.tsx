@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
 import { useAutoSync } from "../hooks/useAutoSync";
+import { useI18n } from "../i18n/context";
 
 // ========== 常量定义 ==========
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
@@ -48,15 +49,12 @@ type TunnelState = {
 };
 
 // ========== 状态映射 ==========
-const STATUS_DISPLAY_MAP: Record<TunnelStatus, { text: string; color: string }> = {
-  offline: { text: "隧道已关闭", color: "text-gray-600" },
-  connecting: { text: "隧道连接中...", color: "text-yellow-600" },
-  online: { text: "隧道已连接", color: "text-green-600" },
-  error: { text: "隧道错误", color: "text-red-600" },
-};
+// 这些映射现在将在组件内部使用翻译
 
 // ========== 主组件 ==========
 export default function TunnelManager({ onStatusChange, className = "" }: TunnelManagerProps) {
+  const { t } = useI18n();
+
   // ========== 状态定义 ==========
   const [tunnelState, setTunnelState] = useState<TunnelState>({
     status: "offline",
@@ -77,8 +75,14 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
 
   // ========== 工具函数 ==========
   const getStatusDisplay = useCallback((status: TunnelStatus) => {
-    return STATUS_DISPLAY_MAP[status] || { text: "未知状态", color: "text-gray-600" };
-  }, []);
+    const statusMap: Record<TunnelStatus, { text: string; color: string }> = {
+      offline: { text: t("ui.disabled"), color: "text-gray-600" },
+      connecting: { text: t("ui.starting"), color: "text-yellow-600" },
+      online: { text: t("ui.enabled"), color: "text-green-600" },
+      error: { text: t("messages.tunnel_start_failed"), color: "text-red-600" },
+    };
+    return statusMap[status] || { text: t("ui.disabled"), color: "text-gray-600" };
+  }, [t]);
 
   const notifyParent = useCallback((status: TunnelStatus, url?: string) => {
     onStatusChange?.(status, url);
@@ -106,7 +110,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       console.error("Failed to load tunnel state:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: "无法加载隧道状态",
+        error: t("messages.operation_failed_retry"),
       }));
     }
   }, [notifyParent]);
@@ -130,7 +134,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       if (!versionInfo.installed) {
         setTunnelState(prev => ({
           ...prev,
-          error: "正在下载 cloudflared...",
+          error: t("ui.starting"),
         }));
       }
 
@@ -140,12 +144,12 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       console.error("Failed to start tunnel:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: `启动隧道失败: ${errorMessage}`,
+        error: `${t("messages.tunnel_start_failed")}: ${errorMessage}`,
         status: "error",
         isLoading: false,
       }));
     }
-  }, [tunnelState.isLoading]);
+  }, [tunnelState.isLoading, t]);
 
   const stopTunnel = useCallback(async () => {
     if (tunnelState.isLoading) return;
@@ -159,26 +163,26 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       console.error("Failed to stop tunnel:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: `停止隧道失败: ${errorMessage}`,
+        error: `${t("messages.tunnel_stop_failed")}: ${errorMessage}`,
         isLoading: false,
       }));
     }
-  }, [tunnelState.isLoading]);
+  }, [tunnelState.isLoading, t]);
 
   const copyTunnelUrl = useCallback(async () => {
     if (!tunnelState.url) return;
 
     try {
       await invoke("copy_tunnel_url");
-      alert("隧道 URL 已复制到剪贴板");
+      alert(t("messages.copy_url_success"));
     } catch (err) {
       console.error("Failed to copy URL:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: "复制 URL 失败",
+        error: t("messages.copy_url_failed"),
       }));
     }
-  }, [tunnelState.url]);
+  }, [tunnelState.url, t]);
 
   const updateConfig = useCallback(async (updates: Partial<TunnelConfig>) => {
     try {
@@ -188,28 +192,28 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
       console.error("Failed to update config:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: "更新配置失败",
+        error: t("messages.update_config_failed"),
       }));
     }
-  }, [loadTunnelState]);
+  }, [loadTunnelState, t]);
 
   const clearCloudflaredCache = useCallback(async () => {
     try {
       await invoke("clear_cloudflared_cache");
       await loadTunnelState();
-      alert("cloudflared 缓存已清理");
+      alert(t("messages.cache_cleared"));
     } catch (err) {
       console.error("Failed to clear cache:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: "清理缓存失败",
+        error: t("messages.clear_cache_failed"),
       }));
     }
-  }, [loadTunnelState]);
+  }, [loadTunnelState, t]);
 
   const applyTunnelConfig = useCallback(async () => {
     if (isSavingConfig) return;
-    
+
     setIsSavingConfig(true);
     try {
       await invoke("apply_tunnel_config", {
@@ -217,17 +221,17 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
         customDomain: config.custom_domain || null,
         tunnelToken: config.tunnel_token || null,
       });
-      alert("隧道配置已保存");
+      alert(t("messages.config_saved"));
     } catch (err) {
       console.error("Failed to apply tunnel config:", err);
       setTunnelState(prev => ({
         ...prev,
-        error: "保存配置失败",
+        error: t("messages.save_config_failed"),
       }));
     } finally {
       setIsSavingConfig(false);
     }
-  }, [config, isSavingConfig]);
+  }, [config, isSavingConfig, t]);
 
   // ========== 事件处理函数 ==========
   const handleTunnelUpdate = useCallback((event: Event<TunnelEventPayload>) => {
@@ -296,7 +300,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
         console.error("Failed to setup tunnel listeners:", err);
         setTunnelState(prev => ({
           ...prev,
-          error: "无法设置隧道监听器",
+          error: t("messages.operation_failed_retry"),
         }));
       }
     };
@@ -327,13 +331,13 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
               {isConnecting && tunnelState.isLoading && (
                 <div className="ml-3 flex items-center">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                  <span className="ml-2 text-sm text-gray-600">正在连接...</span>
+                  <span className="ml-2 text-sm text-gray-600">{t("ui.starting")}</span>
                 </div>
               )}
             </div>
             {tunnelState.url && (
               <div className="mt-1">
-                <span className="text-sm text-gray-600">公网地址: </span>
+                <span className="text-sm text-gray-600">{t("ui.public_address")}: </span>
                 <a
                   href={tunnelState.url}
                   target="_blank"
@@ -345,7 +349,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
               </div>
             )}
           </div>
-          
+
           <div className="flex space-x-2">
             {isStopped ? (
               <button
@@ -353,7 +357,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                 disabled={tunnelState.isLoading}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
               >
-                {tunnelState.isLoading ? "启动中..." : "启动隧道"}
+                {tunnelState.isLoading ? t("ui.starting") : t("buttons.start_tunnel")}
               </button>
             ) : (
               <button
@@ -361,16 +365,16 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                 disabled={tunnelState.isLoading}
                 className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
               >
-                {tunnelState.isLoading ? "停止中..." : "停止隧道"}
+                {tunnelState.isLoading ? t("ui.saving") : t("buttons.stop_tunnel")}
               </button>
             )}
-            
+
             {tunnelState.url && (
               <button
                 onClick={copyTunnelUrl}
                 className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
               >
-                复制
+                {t("buttons.copy")}
               </button>
             )}
 
@@ -379,18 +383,17 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                 onClick={startTunnel}
                 className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
               >
-                重试
+                {t("buttons.retry")}
               </button>
             )}
           </div>
         </div>
 
         {tunnelState.error && (
-          <div className={`mt-2 p-2 rounded text-sm ${
-            isError ? 'bg-red-50 text-red-700' :
+          <div className={`mt-2 p-2 rounded text-sm ${isError ? 'bg-red-50 text-red-700' :
             isConnecting ? 'bg-yellow-50 text-yellow-700' :
-            'bg-gray-50 text-gray-700'
-          }`}>
+              'bg-gray-50 text-gray-700'
+            }`}>
             <div className="flex items-start">
               <span className="flex-shrink-0">
                 {isError ? '❌' : isConnecting ? '⚠️' : 'ℹ️'}
@@ -399,12 +402,12 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
             </div>
             {isError && (
               <div className="mt-2 text-xs">
-                <p className="text-gray-600">可能的原因:</p>
+                <p className="text-gray-600">{t("ui.risk_warning")}</p>
                 <ul className="list-disc pl-5 mt-1 space-y-1">
-                  <li>网络连接不稳定</li>
-                  <li>Cloudflare 服务暂时不可用</li>
-                  <li>防火墙或代理设置阻止连接</li>
-                  <li>尝试点击"重试"按钮重新连接</li>
+                  <li>{t("error_reasons.unstable_network")}</li>
+                  <li>{t("error_reasons.cloudflare_service_unavailable")}</li>
+                  <li>{t("error_reasons.firewall_proxy_blocking")}</li>
+                  <li>{t("error_reasons.try_retry_button")}</li>
                 </ul>
               </div>
             )}
@@ -414,15 +417,15 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
         {cloudflaredInfo && (
           <div className="mt-3 text-sm text-gray-600">
             <div className="flex items-center">
-              <span className="font-medium">cloudflared: </span>
+              <span className="font-medium">{t("ui.cloudflared")}: </span>
               <span className="ml-1">
                 {cloudflaredInfo.installed
-                  ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
-                  : "未安装"}
+                  ? `${t("ui.installed")} ${cloudflaredInfo.version || t("ui.current_version")}`
+                  : t("ui.not_installed_click_to_download")}
               </span>
               {cloudflaredInfo.cached && (
                 <span className="ml-2 text-xs bg-gray-100 px-2 py-1 rounded">
-                  缓存 ({cloudflaredInfo.cache_age_days || 0}天前)
+                  {t("ui.cache")} ({cloudflaredInfo.cache_age_days || 0}天前)
                 </span>
               )}
             </div>
@@ -437,31 +440,30 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
 
     return (
       <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-        <h4 className="font-medium mb-3">隧道配置</h4>
-        
+        <h4 className="font-medium mb-3">{t("ui.tunnel_configuration")}</h4>
+
         <div className="space-y-4">
           {/* 隧道模式选择 */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">隧道模式</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t("ui.tunnel_mode")}</label>
             <div className="flex gap-2">
               {(["temporary", "token"] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={() => setConfig(prev => ({ ...prev, tunnel_mode: mode }))}
-                  className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
-                    config.tunnel_mode === mode
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
+                  className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${config.tunnel_mode === mode
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
                 >
-                  {mode === "temporary" ? "随机临时域名" : "固定自定义域名"}
+                  {mode === "temporary" ? t("ui.random_temporary_domain") : t("ui.fixed_custom_domain")}
                 </button>
               ))}
             </div>
             <p className="text-xs text-gray-500 mt-1">
               {config.tunnel_mode === "temporary"
-                ? "每次启动随机生成临时公网地址"
-                : "使用 Cloudflare Tunnel Token 建立固定隧道"}
+                ? t("ui.random_temporary_domain_desc")
+                : t("ui.fixed_custom_domain_desc")}
             </p>
           </div>
 
@@ -470,7 +472,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  自定义域名
+                  {t("ui.custom_domain")}
                 </label>
                 <input
                   type="text"
@@ -480,30 +482,30 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  在 Cloudflare DNS 中配置 CNAME 记录指向你的隧道
+                  {t("ui.configure_cname_in_cloudflare_dns")}
                 </p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tunnel Token
+                  {t("ui.tunnel_token")}
                 </label>
                 <textarea
                   value={config.tunnel_token || ""}
                   onChange={(e) => setConfig(prev => ({ ...prev, tunnel_token: e.target.value }))}
-                  placeholder="粘贴您的 Cloudflare Tunnel Token..."
+                  placeholder={t("ui.paste_tunnel_token")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                   rows={3}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  从 Cloudflare 仪表盘复制 Tunnel 的连接 Token
+                  {t("ui.associate_cloudflare_account")}
                   <a
                     href="https://dash.cloudflare.com/profile/api-tokens"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 ml-1"
                   >
-                    (获取 Token)
+                    ({t("ui.get_token")})
                   </a>
                 </p>
               </div>
@@ -520,13 +522,13 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
               className="mr-2"
             />
             <label htmlFor="auto-start" className="text-sm">
-              应用启动时自动连接隧道
+              {t("ui.auto_start_tunnel_on_app_launch")}
             </label>
           </div>
 
           {config.last_url && (
             <div className="text-sm">
-              <div className="font-medium">上次隧道地址:</div>
+              <div className="font-medium">{t("ui.last_tunnel_address")}:</div>
               <div className="text-gray-600 break-all">{config.last_url}</div>
             </div>
           )}
@@ -538,17 +540,17 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
               disabled={isSavingConfig}
               className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
-              {isSavingConfig ? "保存中..." : "保存隧道配置"}
+              {isSavingConfig ? t("ui.saving") : t("buttons.save_tunnel_config")}
             </button>
 
             <button
               onClick={clearCloudflaredCache}
               className="px-3 py-1 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
             >
-              清理 cloudflared 缓存
+              {t("ui.clear_cloudflared_cache")}
             </button>
             <p className="text-xs text-gray-500 mt-1">
-              清理下载的 cloudflared 二进制文件缓存
+              {t("ui.clear_cloudflared_cache_desc")}
             </p>
           </div>
         </div>
@@ -558,13 +560,13 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
 
   const renderInstructions = () => (
     <div className="mt-4 text-sm text-gray-600">
-      <p className="font-medium">使用说明:</p>
+      <p className="font-medium">{t("ui.instructions")}:</p>
       <ul className="list-disc pl-5 mt-1 space-y-1">
-        <li>选择"随机临时域名"模式：每次启动获得随机临时地址</li>
-        <li>选择"固定自定义域名"模式：配置 Token 和域名获得固定地址</li>
-        <li>启动隧道后，将获得公网地址用于 OAuth 回调、Webhook 等</li>
-        <li>隧道关闭后地址失效，确保隐私安全</li>
-        <li>复制地址用于 Google OAuth、GitHub Webhook 等配置</li>
+        <li>{t("instructions.random_temporary_domain")}</li>
+        <li>{t("instructions.fixed_custom_domain")}</li>
+        <li>{t("instructions.start_tunnel_for_public_address")}</li>
+        <li>{t("instructions.tunnel_closes_address_invalid")}</li>
+        <li>{t("instructions.copy_address_for_oauth_webhook")}</li>
       </ul>
     </div>
   );
@@ -573,12 +575,12 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
   return (
     <div className={`space-y-4 ${className}`}>
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Cloudflare 隧道</h3>
+        <h3 className="text-lg font-semibold">{t("ui.tunnel")}</h3>
         <button
           onClick={() => setShowConfig(!showConfig)}
           className="text-sm text-gray-500 hover:text-gray-700"
         >
-          {showConfig ? "隐藏配置" : "显示配置"}
+          {showConfig ? t("app.hide_tunnel") : t("app.show_tunnel")}
         </button>
       </div>
 
