@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Runtime, Window};
 
 // 从父模块导入功能模块
-use crate::api::{cloudflared, n8n_core, tunnel};
+use crate::api::{cloudflared, n8n, tunnel};
 
 // 重新导出类型定义，但不重新导出函数（避免宏冲突）
 pub use cloudflared::{CloudflaredCacheInfo, CloudflaredVersionInfo};
@@ -13,33 +13,31 @@ pub use tunnel::{TunnelConfig, TunnelError, TunnelEvent, TunnelHealth, TunnelHea
 /// 向后兼容的包装函数 - 检查 n8n 是否已安装
 #[tauri::command]
 pub async fn is_installed<R: Runtime>(app: AppHandle<R>) -> bool {
-    n8n_core::is_installed(app)
+    n8n::is_installed(app)
 }
 
 /// 向后兼容的包装函数 - 设置 Node 运行环境
 #[tauri::command]
 pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> Result<(), String> {
-    n8n_core::setup_runtime(window)
-        .await
-        .map_err(|e| e.to_string())
+    n8n::setup_runtime(window).await.map_err(|e| e.to_string())
 }
 
 /// 向后兼容的包装函数 - 安装 n8n 核心包
 #[tauri::command]
 pub async fn setup_n8n<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<(), String> {
-    n8n_core::setup_n8n(window).await.map_err(|e| e.to_string())
+    n8n::setup_n8n(window).await.map_err(|e| e.to_string())
 }
 
 /// 向后兼容的包装函数 - 启动本地 n8n 进程
 #[tauri::command]
 pub async fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    n8n_core::launch_n8n(app).map_err(|e| e.to_string())
+    n8n::launch_n8n(app).map_err(|e| e.to_string())
 }
 
 /// 向后兼容的包装函数 - 关闭 n8n 进程
 #[tauri::command]
 pub fn shutdown_n8n() -> Result<(), String> {
-    n8n_core::shutdown_n8n().map_err(|e| e.to_string())
+    n8n::shutdown_n8n().map_err(|e| e.to_string())
 }
 
 /// 向后兼容的包装函数 - 启动 Cloudflare Tunnel
@@ -131,9 +129,7 @@ pub async fn get_tunnel_errors<R: Runtime>(app: AppHandle<R>) -> Result<Vec<Tunn
 /// 向后兼容的包装函数 - 代理健康检查
 #[tauri::command]
 pub async fn proxy_health_check() -> Result<String, String> {
-    n8n_core::proxy_health_check()
-        .await
-        .map_err(|e| e.to_string())
+    n8n::proxy_health_check().await.map_err(|e| e.to_string())
 }
 
 /// 设置节点解禁状态
@@ -142,7 +138,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
     app: AppHandle<R>,
     enabled: bool,
 ) -> Result<(), String> {
-    n8n_core::set_nodes_unlocked(app, enabled)
+    n8n::set_nodes_unlocked(app, enabled)
         .await
         .map_err(|e| e.to_string())
 }
@@ -150,7 +146,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
 /// 获取节点解禁状态
 #[tauri::command]
 pub async fn get_nodes_unlocked() -> Result<bool, String> {
-    n8n_core::get_nodes_unlocked().map_err(|e| e.to_string())
+    n8n::get_nodes_unlocked().map_err(|e| e.to_string())
 }
 
 /// 应用新的隧道配置（支持两种模式）

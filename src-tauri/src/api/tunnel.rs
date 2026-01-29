@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use super::n8n_core::{construct_n8n_envs, shutdown_n8n};
+use super::n8n::{self, shutdown_n8n};
 use super::utils::emit_global_sync;
 use crate::services::manager::{self, PROCESS_MANAGER};
 
@@ -264,7 +264,7 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
             let _ = std::fs::remove_dir_all(&sessions_dir);
         }
 
-        let mut envs = construct_n8n_envs();
+        let mut envs = n8n::construct_n8n_envs();
         envs.insert("N8N_HOST".to_string(), "127.0.0.1".to_string()); // 强制监听 IPv4
         envs.insert("N8N_PORT".to_string(), "5678".to_string());
         envs.insert("WEBHOOK_URL".to_string(), url.to_string());
