@@ -14,6 +14,7 @@ const NODEJS_VERSION: &str = "v20.19.0";
 const NODEJS_BASE_URL: &str = "https://nodejs.org/dist/";
 
 /// Node.js 华为云镜像地址（备用）
+#[allow(dead_code)]
 const NODEJS_HUAWEI_MIRROR_URL: &str = "https://mirrors.huaweicloud.com/nodejs";
 
 /// n8n 服务端口

@@ -37,7 +37,7 @@ pub async fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 /// 向后兼容的包装函数 - 关闭 n8n 进程
 #[tauri::command]
 pub fn shutdown_n8n() {
-    n8n_core::shutdown_n8n()
+    n8n_core::shutdown_n8n();
 }
 
 /// 向后兼容的包装函数 - 启动 Cloudflare Tunnel
@@ -52,19 +52,19 @@ pub async fn start_tunnel<R: Runtime>(
 /// 向后兼容的包装函数 - 停止 Cloudflare Tunnel
 #[tauri::command]
 pub async fn stop_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    tunnel::stop_tunnel(app).await
+    tunnel::stop_tunnel(app)
 }
 
 /// 向后兼容的包装函数 - 获取隧道状态
 #[tauri::command]
 pub async fn get_tunnel_status<R: Runtime>(app: AppHandle<R>) -> Result<TunnelEvent, String> {
-    tunnel::get_tunnel_status(app).await
+    tunnel::get_tunnel_status(app)
 }
 
 /// 向后兼容的包装函数 - 复制隧道URL到剪贴板
 #[tauri::command]
 pub async fn copy_tunnel_url<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    tunnel::copy_tunnel_url(app).await
+    tunnel::copy_tunnel_url(app)
 }
 
 /// 向后兼容的包装函数 - 下载 cloudflared 二进制文件
@@ -87,7 +87,7 @@ pub async fn check_cloudflared_version<R: Runtime>(
 /// 向后兼容的包装函数 - 获取隧道配置
 #[tauri::command]
 pub async fn get_tunnel_config<R: Runtime>(app: AppHandle<R>) -> Result<TunnelConfig, String> {
-    tunnel::get_tunnel_config(app).await
+    tunnel::get_tunnel_config(app)
 }
 
 /// 向后兼容的包装函数 - 更新隧道配置
@@ -99,31 +99,31 @@ pub async fn update_tunnel_config<R: Runtime>(
     custom_domain: Option<String>,
     use_custom_domain: Option<bool>,
 ) -> Result<(), String> {
-    tunnel::update_tunnel_config(app, auto_start, last_url, custom_domain, use_custom_domain).await
+    tunnel::update_tunnel_config(app, auto_start, last_url, custom_domain, use_custom_domain)
 }
 
 /// 向后兼容的包装函数 - 应用启动时加载配置
 #[tauri::command]
 pub async fn load_tunnel_config_on_start<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    tunnel::load_tunnel_config_on_start(app).await
+    tunnel::load_tunnel_config_on_start(app)
 }
 
 /// 向后兼容的包装函数 - 检查隧道健康状况
 #[tauri::command]
 pub async fn check_tunnel_health<R: Runtime>(app: AppHandle<R>) -> Result<TunnelHealth, String> {
-    tunnel::check_tunnel_health(app).await
+    tunnel::check_tunnel_health(app)
 }
 
 /// 向后兼容的包装函数 - 尝试恢复隧道连接
 #[tauri::command]
 pub async fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    tunnel::recover_tunnel(app).await
+    tunnel::recover_tunnel(app)
 }
 
 /// 向后兼容的包装函数 - 获取错误日志
 #[tauri::command]
 pub async fn get_tunnel_errors<R: Runtime>(app: AppHandle<R>) -> Result<Vec<TunnelError>, String> {
-    tunnel::get_tunnel_errors(app).await
+    tunnel::get_tunnel_errors(app)
 }
 
 /// 向后兼容的包装函数 - 代理健康检查
@@ -144,7 +144,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
 /// 获取节点解禁状态
 #[tauri::command]
 pub async fn get_nodes_unlocked() -> Result<bool, String> {
-    n8n_core::get_nodes_unlocked().await
+    n8n_core::get_nodes_unlocked()
 }
 
 /// 应用新的隧道配置（支持两种模式）
@@ -167,7 +167,7 @@ pub async fn apply_tunnel_config<R: Runtime>(
                     .ok_or("Token 模式需要提供自定义域名")?;
                 tunnel::TunnelMode::Token { token, domain }
             }
-            _ => return Err(format!("未知的隧道模式: {}", s)),
+            _ => return Err(format!("未知的隧道模式: {s}")),
         },
         // 处理对象格式：{ Token: { token, domain } }
         serde_json::Value::Object(obj) => {
@@ -200,7 +200,6 @@ pub async fn apply_tunnel_config<R: Runtime>(
         custom_domain,
         None, // tunnel_token 现在包含在 TunnelMode::Token 中
     )
-    .await
 }
 
 /// 切换侧边栏状态

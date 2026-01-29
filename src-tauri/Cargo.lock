@@ -2062,6 +2062,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-fs",
  "tauri-plugin-shell",
+ "thiserror 1.0.69",
  "tokio",
  "url",
  "which",

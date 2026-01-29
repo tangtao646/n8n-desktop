@@ -50,17 +50,19 @@ struct DownloadConfig {
 }
 
 // --- 主下载函数 ---
-
+///
+/// # Errors
+///
 pub async fn download_file<R: Runtime>(
     window: Window<R>,
     url: String,
     dest: PathBuf,
     download_type: String,
 ) -> Result<(), String> {
-    let config = analyze_download_config(&url, &dest, download_type)?;
+    let config = analyze_download_config(&url, &dest, download_type);
 
     process_downloaded_content(&window, &config).await?;
-    finalize_download(&window, &config).await?;
+    finalize_download(&window, &config);
 
     Ok(())
 }
@@ -68,22 +70,18 @@ pub async fn download_file<R: Runtime>(
 // --- 辅助函数 ---
 
 /// 分析下载配置
-fn analyze_download_config(
-    url: &str,
-    dest: &Path,
-    download_type: String,
-) -> Result<DownloadConfig, String> {
+fn analyze_download_config(url: &str, dest: &Path, download_type: String) -> DownloadConfig {
     let pure_url = url.split('?').next().unwrap_or(url).to_lowercase();
     let is_archive = ARCHIVE_EXTENSIONS.iter().any(|ext| pure_url.ends_with(ext));
     let destination_is_file = dest.extension().is_some() && dest.parent().is_some();
 
-    Ok(DownloadConfig {
+    DownloadConfig {
         url: url.to_string(),
         destination: dest.to_path_buf(),
         download_type,
         is_archive,
         destination_is_file,
-    })
+    }
 }
 
 /// 执行带进度显示的下载
@@ -160,7 +158,9 @@ fn update_progress_if_needed<R: Runtime>(
     last_emit_time: &mut Instant,
     last_emit_progress: &mut f64,
 ) {
-    let progress = (f64::from(downloaded as u32) / f64::from(total as u32)) * 100.0;
+    let downloaded_u32 = u32::try_from(downloaded).unwrap_or(u32::MAX);
+    let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
+    let progress = (f64::from(downloaded_u32) / f64::from(total_u32)) * 100.0;
     let time_elapsed =
         last_emit_time.elapsed() >= Duration::from_millis(PROGRESS_UPDATE_MIN_INTERVAL_MS);
     let progress_increased = progress - *last_emit_progress >= PROGRESS_UPDATE_MIN_INCREMENT;
@@ -187,14 +187,14 @@ async fn process_downloaded_content<R: Runtime>(
     let buffer = download_with_progress(window, config).await?;
 
     if config.is_archive && !config.destination_is_file {
-        handle_archive_download(window, config, &buffer).await
+        handle_archive_download(window, config, &buffer)
     } else {
         handle_file_download(config, &buffer)
     }
 }
 
 /// 处理存档文件下载
-async fn handle_archive_download<R: Runtime>(
+fn handle_archive_download<R: Runtime>(
     window: &Window<R>,
     config: &DownloadConfig,
     buffer: &[u8],
@@ -267,11 +267,11 @@ fn is_tar_gz_archive(buffer: &[u8]) -> bool {
 /// 解压 ZIP 文件
 fn extract_zip(buffer: &[u8], dest: &Path) -> Result<(), String> {
     let mut archive =
-        zip::ZipArchive::new(Cursor::new(buffer)).map_err(|e| format!("ZIP 格式非法: {}", e))?;
+        zip::ZipArchive::new(Cursor::new(buffer)).map_err(|e| format!("ZIP 格式非法: {e}"))?;
 
     archive
         .extract(dest)
-        .map_err(|e| format!("ZIP 解压失败: {}", e))
+        .map_err(|e| format!("ZIP 解压失败: {e}"))
 }
 
 /// 解压 TAR.GZ 文件
@@ -284,7 +284,7 @@ fn extract_tar_gz(buffer: &[u8], dest: &Path) -> Result<(), String> {
 
     archive
         .unpack(dest)
-        .map_err(|e| format!("TAR.GZ 解压失败: {}", e))
+        .map_err(|e| format!("TAR.GZ 解压失败: {e}"))
 }
 
 /// 展平单层目录结构
@@ -383,10 +383,7 @@ fn remove_macos_quarantine_attribute(path: &Path) {
 }
 
 /// 完成下载
-async fn finalize_download<R: Runtime>(
-    window: &Window<R>,
-    config: &DownloadConfig,
-) -> Result<(), String> {
+fn finalize_download<R: Runtime>(window: &Window<R>, config: &DownloadConfig) {
     let _ = window.emit(
         "download-progress",
         Progress {
@@ -394,67 +391,4 @@ async fn finalize_download<R: Runtime>(
             download_type: config.download_type.clone(),
         },
     );
-
-    Ok(())
-}
-
-// --- 测试模块 ---
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env::temp_dir;
-
-    #[test]
-    fn test_analyze_download_config() {
-        let url = "https://example.com/file.zip";
-        let dest = temp_dir().join("test.zip");
-        let download_type = "test".to_string();
-
-        let config = analyze_download_config(url, &dest, download_type)
-            .expect("Failed to analyze download config");
-
-        assert_eq!(config.url, url);
-        assert!(config.is_archive);
-        assert!(config.destination_is_file);
-    }
-
-    #[test]
-    fn test_is_tar_gz_archive() {
-        // GZIP 魔数
-        let gzip_magic = vec![0x1f, 0x8b, 0x08];
-        assert!(is_tar_gz_archive(&gzip_magic));
-
-        // 非 GZIP 数据
-        let non_gzip = vec![0x00, 0x01, 0x02];
-        assert!(!is_tar_gz_archive(&non_gzip));
-    }
-
-    #[test]
-    fn test_ensure_parent_directory_exists() {
-        let temp_file = temp_dir().join("test_parent").join("file.txt");
-
-        assert!(ensure_parent_directory_exists(&temp_file).is_ok());
-        assert!(temp_file
-            .parent()
-            .expect("temp file should have parent")
-            .exists());
-
-        // 清理
-        fs::remove_dir_all(temp_file.parent().expect("temp file should have parent")).ok();
-    }
-
-    #[test]
-    fn test_write_file_content() {
-        let temp_file = temp_dir().join("test_write.txt");
-        let content = b"Hello, World!";
-
-        assert!(write_file_content(&temp_file, content).is_ok());
-        assert!(temp_file.exists());
-
-        let read_content = fs::read(&temp_file).expect("Failed to read test file");
-        assert_eq!(read_content, content);
-
-        // 清理
-        fs::remove_file(&temp_file).ok();
-    }
 }

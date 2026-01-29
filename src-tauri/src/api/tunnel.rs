@@ -1,10 +1,9 @@
 use chrono;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -115,21 +114,39 @@ pub struct TunnelError {
 }
 
 // --- 2. 全局状态 ---
-pub(crate) static TUNNEL_URL: Lazy<Arc<Mutex<Option<String>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(None)));
-pub(crate) static TUNNEL_RUNNING: Lazy<Arc<Mutex<bool>>> =
-    Lazy::new(|| Arc::new(Mutex::new(false)));
-pub(crate) static TUNNEL_CONFIG: Lazy<Arc<Mutex<TunnelConfig>>> =
-    Lazy::new(|| Arc::new(Mutex::new(TunnelConfig::default())));
+pub(crate) static TUNNEL_URL: LazyLock<Arc<Mutex<Option<String>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(None)));
+pub(crate) static TUNNEL_RUNNING: LazyLock<Arc<Mutex<bool>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(false)));
+pub(crate) static TUNNEL_CONFIG: LazyLock<Arc<Mutex<TunnelConfig>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(TunnelConfig::default())));
 
-// --- 3. 内部辅助函数 ---
+// --- 3. 内部辅助函数和工具函数 ---
+
+/// 安全获取 TUNNEL_URL 的锁
+pub fn tunnel_url_lock() -> MutexGuard<'static, Option<String>> {
+    TUNNEL_URL.lock().expect("TUNNEL_URL mutex poisoned")
+}
+
+/// 安全获取 TUNNEL_RUNNING 的锁
+pub fn tunnel_running_lock() -> MutexGuard<'static, bool> {
+    TUNNEL_RUNNING
+        .lock()
+        .expect("TUNNEL_RUNNING mutex poisoned")
+}
+
+/// 安全获取 TUNNEL_CONFIG 的锁
+pub fn tunnel_config_lock() -> MutexGuard<'static, TunnelConfig> {
+    TUNNEL_CONFIG.lock().expect("TUNNEL_CONFIG mutex poisoned")
+}
 
 /// 从 cloudflared 输出中提取隧道 ID
+#[allow(dead_code)]
 fn extract_tunnel_id_from_output(output: &str) -> Option<String> {
     // 正则匹配隧道 ID 格式：类似 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx 或短 ID
     let re =
         Regex::new(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}|[a-z0-9]{32}")
-            .unwrap();
+            .expect("Failed to compile tunnel ID regex");
     re.find(output).map(|m| m.as_str().to_string())
 }
 
@@ -157,10 +174,10 @@ fn handle_tunnel_url<R: Runtime>(url: &str, is_temporary: bool, app_clone: &AppH
         return false;
     }
 
-    println!("[Tunnel] 成功捕获并验证 URL: {}", url);
+    println!("[Tunnel] 成功捕获并验证 URL: {url}");
 
     {
-        let mut url_guard = TUNNEL_URL.lock().unwrap();
+        let mut url_guard = tunnel_url_lock();
         *url_guard = Some(url.to_string());
     }
 
@@ -186,17 +203,17 @@ pub fn load_tunnel_config<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
     }
     let config_json = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     let config: TunnelConfig = serde_json::from_str(&config_json).map_err(|e| e.to_string())?;
-    let mut config_guard = TUNNEL_CONFIG.lock().unwrap();
+    let mut config_guard = tunnel_config_lock();
     *config_guard = config;
     if let Some(last_url) = &config_guard.last_url {
-        let mut url_guard = TUNNEL_URL.lock().unwrap();
+        let mut url_guard = tunnel_url_lock();
         *url_guard = Some(last_url.clone());
     }
     Ok(())
 }
 
 fn save_tunnel_config<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let config = TUNNEL_CONFIG.lock().unwrap().clone();
+    let config = tunnel_config_lock().clone();
     let config_path = app
         .path()
         .app_config_dir()
@@ -212,7 +229,7 @@ fn save_tunnel_config<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 
 fn update_last_url<R: Runtime>(app: &AppHandle<R>, url: &str) -> Result<(), String> {
     {
-        let mut config_guard = TUNNEL_CONFIG.lock().unwrap();
+        let mut config_guard = tunnel_config_lock();
         config_guard.last_url = Some(url.to_string());
         config_guard.created_at = chrono::Local::now().to_rfc3339();
     }
@@ -224,7 +241,7 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
         return;
     }
 
-    let tunnel_running = *TUNNEL_RUNNING.lock().unwrap();
+    let tunnel_running = *tunnel_running_lock();
     if !tunnel_running {
         return;
     }
@@ -255,15 +272,15 @@ fn restart_n8n_with_env<R: Runtime>(app: &AppHandle<R>, url: &str) {
 
         println!("[Tunnel] 启动 n8n...");
         match manager::start_node(node_path, n8n_bin, data_dir, envs) {
-            Ok(_) => {
+            Ok(()) => {
                 println!("[Tunnel] ✓ n8n 重启成功");
-                println!("[Tunnel] ✓ 新的 WEBHOOK_URL: {}", url);
+                println!("[Tunnel] ✓ 新的 WEBHOOK_URL: {url}");
                 println!("[Tunnel] ⚠️  请重新登录 n8n 以刷新 webhook 地址");
 
                 // 广播全局同步事件，通知前端刷新 UI
                 emit_global_sync(app);
             }
-            Err(e) => println!("[Tunnel] ✗ 启动失败: {}", e),
+            Err(e) => println!("[Tunnel] ✗ 启动失败: {e}"),
         }
     }
 }
@@ -287,7 +304,7 @@ pub async fn start_tunnel<R: Runtime>(
         .ok();
 
     // 2. 获取当前配置模式
-    let cfg = TUNNEL_CONFIG.lock().unwrap().clone();
+    let cfg = tunnel_config_lock().clone();
     let tunnel_mode = cfg.tunnel_mode;
 
     // 3. 根据模式构造不同的启动命令
@@ -295,7 +312,7 @@ pub async fn start_tunnel<R: Runtime>(
         TunnelMode::Token { token, .. } => {
             println!("[Tunnel] 启动 Token 模式：跳过本地配置，连接云端端点...");
             Command::new(&cloudflared_path)
-                .args(&["tunnel", "run", "--token", token]) // 关键：Token 模式严禁带 --url
+                .args(["tunnel", "run", "--token", token]) // 关键：Token 模式严禁带 --url
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -304,7 +321,7 @@ pub async fn start_tunnel<R: Runtime>(
         TunnelMode::Temporary => {
             println!("[Tunnel] 启动临时模式：准备捕获随机域名...");
             Command::new(&cloudflared_path)
-                .args(&[
+                .args([
                     "tunnel",
                     "--url",
                     "http://localhost:5678",
@@ -317,7 +334,7 @@ pub async fn start_tunnel<R: Runtime>(
         }
     };
 
-    *TUNNEL_RUNNING.lock().unwrap() = true;
+    *tunnel_running_lock() = true;
     let stderr = child.stderr.take().ok_or("无法捕获标准错误流")?;
     let app_clone = app.clone();
 
@@ -363,7 +380,8 @@ pub async fn start_tunnel<R: Runtime>(
             // 临时模式：继续保持正则抓取逻辑
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                let regex_temp = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com").unwrap();
+                let regex_temp = Regex::new(r"https://[a-z0-9-]+\.trycloudflare\.com")
+                    .expect("Failed to compile temporary tunnel URL regex");
                 let mut found_url = false;
 
                 for line in reader.lines() {
@@ -383,27 +401,27 @@ pub async fn start_tunnel<R: Runtime>(
     Ok(())
 }
 
-pub async fn stop_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub fn stop_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     println!("[Tunnel] 正在停止隧道...");
 
     #[cfg(unix)]
-    let _ = Command::new("pkill").args(&["-f", "cloudflared"]).output();
+    let _ = Command::new("pkill").args(["-f", "cloudflared"]).output();
     #[cfg(windows)]
     let _ = Command::new("taskkill")
-        .args(&["/F", "/IM", "cloudflared.exe", "/T"])
+        .args(["/F", "/IM", "cloudflared.exe", "/T"])
         .output();
 
-    *TUNNEL_URL.lock().unwrap() = None;
-    *TUNNEL_RUNNING.lock().unwrap() = false;
+    *tunnel_url_lock() = None;
+    *tunnel_running_lock() = false;
 
     println!("[Tunnel] 隧道已停止，清理缓存");
     app.emit("tunnel-event", TunnelEvent::new("offline")).ok();
     Ok(())
 }
 
-pub async fn get_tunnel_status<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelEvent, String> {
-    let url = TUNNEL_URL.lock().unwrap().clone();
-    let running = *TUNNEL_RUNNING.lock().unwrap();
+pub fn get_tunnel_status<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelEvent, String> {
+    let url = tunnel_url_lock().clone();
+    let running = *tunnel_running_lock();
     let status = if running {
         if url.is_some() {
             "online"
@@ -421,15 +439,17 @@ pub async fn get_tunnel_status<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelE
     })
 }
 
-pub async fn copy_tunnel_url<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let url = TUNNEL_URL.lock().unwrap().clone().ok_or("No URL")?;
+pub fn copy_tunnel_url<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    let url = tunnel_url_lock().clone().ok_or("No URL")?;
     #[cfg(target_os = "macos")]
     {
         let mut c = Command::new("pbcopy")
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| e.to_string())?;
-        c.stdin.as_mut().unwrap().write_all(url.as_bytes()).ok();
+        if let Some(stdin) = c.stdin.as_mut() {
+            stdin.write_all(url.as_bytes()).ok();
+        }
     }
     #[cfg(target_os = "windows")]
     {
@@ -437,19 +457,21 @@ pub async fn copy_tunnel_url<R: Runtime>(app: AppHandle<R>) -> Result<(), String
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| e.to_string())?;
-        c.stdin.as_mut().unwrap().write_all(url.as_bytes()).ok();
+        if let Some(stdin) = c.stdin.as_mut() {
+            stdin.write_all(url.as_bytes()).ok();
+        }
     }
     app.emit("tunnel-event", TunnelEvent::with_url("online", url))
         .ok();
     Ok(())
 }
 
-pub async fn get_tunnel_config<R: Runtime>(app: AppHandle<R>) -> Result<TunnelConfig, String> {
+pub fn get_tunnel_config<R: Runtime>(app: AppHandle<R>) -> Result<TunnelConfig, String> {
     load_tunnel_config(&app)?;
-    Ok(TUNNEL_CONFIG.lock().unwrap().clone())
+    Ok(tunnel_config_lock().clone())
 }
 
-pub async fn update_tunnel_config<R: Runtime>(
+pub fn update_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
     auto_start: Option<bool>,
     last_url: Option<String>,
@@ -457,7 +479,7 @@ pub async fn update_tunnel_config<R: Runtime>(
     use_custom_domain: Option<bool>,
 ) -> Result<(), String> {
     {
-        let mut cfg = TUNNEL_CONFIG.lock().unwrap();
+        let mut cfg = tunnel_config_lock();
         if let Some(v) = auto_start {
             cfg.auto_start = v;
         }
@@ -474,9 +496,9 @@ pub async fn update_tunnel_config<R: Runtime>(
     save_tunnel_config(&app)
 }
 
-pub async fn check_tunnel_health<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelHealth, String> {
-    let url = TUNNEL_URL.lock().unwrap().clone();
-    let running = *TUNNEL_RUNNING.lock().unwrap();
+pub fn check_tunnel_health<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelHealth, String> {
+    let url = tunnel_url_lock().clone();
+    let running = *tunnel_running_lock();
     let (status, msg) = if running {
         if url.is_some() {
             (TunnelHealthStatus::Healthy, "Healthy")
@@ -494,12 +516,12 @@ pub async fn check_tunnel_health<R: Runtime>(_app: AppHandle<R>) -> Result<Tunne
     })
 }
 
-pub async fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    stop_tunnel(app.clone()).await?;
+pub fn recover_tunnel<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    stop_tunnel(app.clone())?;
     Ok(())
 }
 
-pub async fn apply_tunnel_config<R: Runtime>(
+pub fn apply_tunnel_config<R: Runtime>(
     app: AppHandle<R>,
     tunnel_mode: TunnelMode,
     _custom_domain: Option<String>,
@@ -522,7 +544,7 @@ pub async fn apply_tunnel_config<R: Runtime>(
 
     // 更新配置
     {
-        let mut cfg = TUNNEL_CONFIG.lock().unwrap();
+        let mut cfg = tunnel_config_lock();
         cfg.tunnel_mode = tunnel_mode;
         // 对于 Token 模式，需要更新 custom_domain 字段
         if let TunnelMode::Token { domain, .. } = &cfg.tunnel_mode {
@@ -534,8 +556,12 @@ pub async fn apply_tunnel_config<R: Runtime>(
     save_tunnel_config(&app)?;
 
     // 如果隧道正在运行，需要重启
-    if PROCESS_MANAGER.lock().unwrap().has_child() {
-        let url = TUNNEL_URL.lock().unwrap().clone().unwrap_or_default();
+    if PROCESS_MANAGER
+        .lock()
+        .expect("PROCESS_MANAGER mutex poisoned")
+        .has_child()
+    {
+        let url = tunnel_url_lock().clone().unwrap_or_default();
         restart_n8n_with_env(&app, &url);
         // 注意：restart_n8n_with_env 内部已经包含 emit_global_sync 调用
     }
@@ -543,10 +569,10 @@ pub async fn apply_tunnel_config<R: Runtime>(
     Ok(())
 }
 
-pub async fn get_tunnel_errors<R: Runtime>(_app: AppHandle<R>) -> Result<Vec<TunnelError>, String> {
+pub fn get_tunnel_errors<R: Runtime>(_app: AppHandle<R>) -> Result<Vec<TunnelError>, String> {
     Ok(vec![])
 }
 
-pub async fn load_tunnel_config_on_start<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub fn load_tunnel_config_on_start<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     load_tunnel_config(&app)
 }

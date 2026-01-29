@@ -1,6 +1,5 @@
 pub mod api;
 pub mod services;
-use std::env;
 
 use tauri::RunEvent;
 
@@ -52,24 +51,24 @@ pub fn run() {
     builder
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
-            if let RunEvent::ExitRequested { .. } = event {
-                // 在应用退出前，直接调用 shutdown_n8n
-                // 它现在是同步的，所以能保证在退出前完成
-                api::commands::shutdown_n8n();
+        .run(|_app, event| handle_app_run_event(event));
+}
 
-                // 2. 关键：关闭隧道
-                // 由于 RunEvent 闭包是同步的，我们直接用阻塞方式杀死进程
-                #[cfg(unix)]
-                let _ = std::process::Command::new("pkill")
-                    .args(&["-f", "cloudflared"])
-                    .output();
-                #[cfg(windows)]
-                let _ = std::process::Command::new("taskkill")
-                    .args(&["/F", "/IM", "cloudflared.exe", "/T"])
-                    .output();
+fn handle_app_run_event(event: tauri::RunEvent) {
+    if let RunEvent::ExitRequested { .. } = event {
+        // 在应用退出前，直接调用 shutdown_n8n
+        api::commands::shutdown_n8n();
 
-                println!("Application exiting: Cleaned up n8n and tunnel processes.");
-            }
-        });
+        // 关闭隧道
+        #[cfg(unix)]
+        let _ = std::process::Command::new("pkill")
+            .args(&["-f", "cloudflared"])
+            .output();
+        #[cfg(windows)]
+        let _ = std::process::Command::new("taskkill")
+            .args(&["/F", "/IM", "cloudflared.exe", "/T"])
+            .output();
+
+        println!("Application exiting: Cleaned up n8n and tunnel processes.");
+    }
 }

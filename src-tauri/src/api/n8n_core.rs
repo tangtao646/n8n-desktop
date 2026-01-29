@@ -1,6 +1,5 @@
 use crate::services::manager::PROCESS_MANAGER;
 use crate::services::{downloader, manager};
-use once_cell::sync::Lazy;
 use reqwest;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -8,7 +7,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
 
 use super::utils::emit_global_sync;
@@ -41,9 +40,16 @@ const HEALTH_CHECK_ENDPOINTS: [&str; 4] = [
 // --- 全局状态 ---
 
 /// 节点解禁状态
-static NODES_UNLOCKED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+static NODES_UNLOCKED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 
 // --- 内部辅助函数 ---
+
+/// 安全获取 NODES_UNLOCKED 的锁
+fn nodes_unlocked_lock() -> std::sync::MutexGuard<'static, bool> {
+    NODES_UNLOCKED
+        .lock()
+        .expect("NODES_UNLOCKED mutex poisoned")
+}
 
 /// 确定最终的隧道 URL（根据隧道模式和配置）
 fn determine_tunnel_url(
@@ -54,7 +60,7 @@ fn determine_tunnel_url(
     match tunnel_mode {
         crate::api::tunnel::TunnelMode::Token { domain, .. } => {
             // Token 模式：返回配置的自定义域名
-            Some(format!("https://{}", domain))
+            Some(format!("https://{domain}"))
         }
         crate::api::tunnel::TunnelMode::Temporary => {
             // 临时隧道模式：使用 cloudflared 生成的临时 URL
@@ -65,32 +71,26 @@ fn determine_tunnel_url(
 
 /// 构造 n8n 进程的环境变量映射
 pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
-    use crate::api::tunnel::{TUNNEL_CONFIG, TUNNEL_RUNNING, TUNNEL_URL};
+    use crate::api::tunnel::{tunnel_config_lock, tunnel_running_lock, tunnel_url_lock};
     use std::collections::HashMap;
 
     let mut envs = HashMap::new();
 
     // 条件 A: 隧道开关 tunnel_enabled
-    let tunnel_enabled = {
-        let running_guard = TUNNEL_RUNNING.lock().unwrap();
-        *running_guard
-    };
+    let tunnel_enabled = *tunnel_running_lock();
 
     // 卫语句：如果隧道未启用，跳过隧道相关环境变量设置
     if tunnel_enabled {
         // 获取隧道配置和 URL
         let (tunnel_mode, custom_domain) = {
-            let config_guard = TUNNEL_CONFIG.lock().unwrap();
+            let config_guard = tunnel_config_lock();
             (
                 config_guard.tunnel_mode.clone(),
                 config_guard.custom_domain.clone(),
             )
         };
 
-        let tunnel_url = {
-            let url_guard = TUNNEL_URL.lock().unwrap();
-            url_guard.clone()
-        };
+        let tunnel_url = tunnel_url_lock().clone();
 
         // 使用辅助函数确定最终 URL
         if let Some(final_url) = determine_tunnel_url(&tunnel_mode, custom_domain, tunnel_url) {
@@ -103,10 +103,7 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
     }
 
     // 条件 B: 节点解禁开关 nodes_unlocked
-    let nodes_unlocked = {
-        let unlocked_guard = NODES_UNLOCKED.lock().unwrap();
-        *unlocked_guard
-    };
+    let nodes_unlocked = *nodes_unlocked_lock();
 
     if nodes_unlocked {
         // 启用节点解禁：设置空列表
@@ -131,14 +128,14 @@ pub(crate) fn construct_n8n_envs() -> HashMap<String, String> {
 pub fn calculate_file_sha256(file_path: &Path) -> Result<String, String> {
     use std::io::Read;
 
-    let mut file = fs::File::open(file_path).map_err(|e| format!("无法打开文件: {}", e))?;
+    let mut file = fs::File::open(file_path).map_err(|e| format!("无法打开文件: {e}"))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0; 8192];
 
     loop {
         let bytes_read = file
             .read(&mut buffer)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+            .map_err(|e| format!("读取文件失败: {e}"))?;
         if bytes_read == 0 {
             break;
         }
@@ -162,7 +159,7 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
         .send()
         .await
         .map_err(|e| {
-            println!("GitHub API 请求失败，跳过 SHA256 验证: {}", e);
+            println!("GitHub API 请求失败，跳过 SHA256 验证: {e}");
             e.to_string()
         })?;
 
@@ -177,12 +174,12 @@ pub async fn fetch_latest_sha256(platform: &str) -> Result<Option<String>, Strin
 
     // 解析响应
     let text = response.text().await.map_err(|e| {
-        println!("读取 GitHub 响应失败，跳过 SHA256 验证: {}", e);
+        println!("读取 GitHub 响应失败，跳过 SHA256 验证: {e}");
         e.to_string()
     })?;
 
     let json: Value = serde_json::from_str(&text).map_err(|e| {
-        println!("解析 GitHub JSON 失败，跳过 SHA256 验证: {}", e);
+        println!("解析 GitHub JSON 失败，跳过 SHA256 验证: {e}");
         e.to_string()
     })?;
 
@@ -491,18 +488,20 @@ pub async fn set_nodes_unlocked<R: Runtime>(
 ) -> Result<(), String> {
     // 1. 更新全局状态
     {
-        let mut unlocked = NODES_UNLOCKED.lock().unwrap();
+        let mut unlocked = nodes_unlocked_lock();
         *unlocked = enabled;
     }
-    println!("[DEBUG] 节点解禁状态已设置为: {}", enabled);
+    println!("[DEBUG] 节点解禁状态已设置为: {enabled}");
 
     // 2. 检查 n8n 是否正在运行
     let is_running = {
-        let manager = PROCESS_MANAGER.lock().unwrap();
+        let manager = PROCESS_MANAGER
+            .lock()
+            .expect("PROCESS_MANAGER mutex poisoned");
         manager.has_child()
     };
 
-    println!("[DEBUG] n8n 运行状态: {}", is_running);
+    println!("[DEBUG] n8n 运行状态: {is_running}");
 
     if !is_running {
         println!("[DEBUG] n8n 未运行，无需重启");
@@ -513,12 +512,12 @@ pub async fn set_nodes_unlocked<R: Runtime>(
     let app_path = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
 
-    println!("[DEBUG] 应用路径: {:?}", app_path);
+    println!("[DEBUG] 应用路径: {}", app_path.display());
 
     let n8n_bin = app_path.join("n8n-core/node_modules/n8n/bin/n8n");
-    println!("[DEBUG] n8n 二进制路径: {:?}", n8n_bin);
+    println!("[DEBUG] n8n 二进制路径: {}", n8n_bin.display());
 
     if !n8n_bin.exists() {
         println!("[DEBUG] n8n 二进制文件不存在");
@@ -527,7 +526,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
 
     let runtime_dir = app_path.join("runtime");
     let node_path = manager::get_node_binary_path(runtime_dir);
-    println!("[DEBUG] node 二进制路径: {:?}", node_path);
+    println!("[DEBUG] node 二进制路径: {}", node_path.display());
 
     if !node_path.exists() {
         println!("[DEBUG] node 二进制文件不存在");
@@ -536,13 +535,13 @@ pub async fn set_nodes_unlocked<R: Runtime>(
 
     let data_dir = app_path.join("n8n-data");
     if !data_dir.exists() {
-        println!("[DEBUG] 创建数据目录: {:?}", data_dir);
+        println!("[DEBUG] 创建数据目录: {}", data_dir.display());
         fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     }
 
     // 4. 构建新的环境变量
     let additional_envs = construct_n8n_envs();
-    println!("[DEBUG] 构建的环境变量: {:?}", additional_envs);
+    println!("[DEBUG] 构建的环境变量: {additional_envs:?}");
 
     // 5. 物理重启：杀掉再重启
     println!("[DEBUG] 正在重启 n8n 以应用节点解禁设置...");
@@ -560,7 +559,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(
     // 5.3 重新启动 n8n
     println!("[DEBUG] 重新启动 n8n...");
     match manager::start_node(node_path, n8n_bin, data_dir, additional_envs) {
-        Ok(_) => {
+        Ok(()) => {
             println!("[DEBUG] n8n 已重启，节点解禁设置已应用");
 
             // 广播全局同步事件，通知前端刷新 UI
@@ -568,15 +567,15 @@ pub async fn set_nodes_unlocked<R: Runtime>(
             Ok(())
         }
         Err(e) => {
-            println!("[DEBUG] 重启 n8n 失败: {}", e);
+            println!("[DEBUG] 重启 n8n 失败: {e}");
             Err(e)
         }
     }
 }
 
 /// 获取节点解禁状态
-pub async fn get_nodes_unlocked() -> Result<bool, String> {
-    let unlocked = NODES_UNLOCKED.lock().unwrap();
+pub fn get_nodes_unlocked() -> Result<bool, String> {
+    let unlocked = nodes_unlocked_lock();
     Ok(*unlocked)
 }
 
