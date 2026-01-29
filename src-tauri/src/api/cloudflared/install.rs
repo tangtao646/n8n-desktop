@@ -104,7 +104,7 @@ impl InstallManager {
     #[cfg(windows)]
     pub fn install_to_system_path(binary_path: &Path) -> CloudflaredResult<()> {
         use std::fs;
-        use winreg::enums::*;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
         use winreg::RegKey;
 
         let system_path = Path::new("C:\\Program Files\\cloudflared\\cloudflared.exe");

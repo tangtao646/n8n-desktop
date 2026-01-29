@@ -192,6 +192,7 @@ impl DownloadManager {
     }
 
     /// 设置文件权限（仅 Unix 系统）
+    #[allow(unused_variables)]
     fn set_file_permissions(&self, binary_path: &Path) -> CloudflaredResult<()> {
         #[cfg(unix)]
         {

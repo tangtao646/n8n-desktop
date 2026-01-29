@@ -2,7 +2,7 @@
 //!
 //! 提供 n8n 核心包的下载、验证和安装功能。
 
-use crate::services::{downloader, manager};
+use crate::services::downloader;
 use reqwest;
 use serde_json::Value;
 use sha2::{Digest, Sha256};

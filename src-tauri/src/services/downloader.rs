@@ -343,6 +343,7 @@ fn flatten_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<()
 }
 
 /// 修复权限（仅 Unix 系统）
+#[allow(unused_variables)]
 fn fix_permissions_if_needed(dest: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {

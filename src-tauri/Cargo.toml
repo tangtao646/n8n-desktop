@@ -45,3 +45,6 @@ url = "2.5"
 rand = "0.8"
 dirs = "5.0"
 serde_yaml = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

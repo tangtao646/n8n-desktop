@@ -1,6 +1,5 @@
 //! Cloudflared 错误类型定义
 
-use std::fmt;
 use thiserror::Error;
 
 /// Cloudflared 操作错误
