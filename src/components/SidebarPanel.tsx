@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn, Event } from "@tauri-apps/api/event";
 import { useAutoSync, generateTimestampedUrl } from "../hooks/useAutoSync";
 import { useI18n } from "../i18n/context";
+import { getVersion } from '@tauri-apps/api/app';
 
 // ========== 常量定义 ==========
 const CLOUDFLARED_DEFAULT_PATH = "cloudflared";
@@ -106,7 +107,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   // const [authPollingInterval, setAuthPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   const [cloudflaredInfo, setCloudflaredInfo] = useState<CloudflaredVersionInfo | null>(null);
-  const [appVersion] = useState<string>(DEFAULT_APP_VERSION);
+  const [appVersion, setAppVersion] = useState<string>(''); 
 
   // ========== 工具函数 ==========
   const getN8nStatusDisplay = useCallback((status: N8nStatus) => {
@@ -492,7 +493,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     const setupListeners = async () => {
       try {
         unlistenTunnelUpdate = await listen<TunnelEventPayload>("tunnel-event", handleTunnelUpdate);
-
+      try {
+        const version = await getVersion();
+        setAppVersion(version);
+        } catch (err) {
+         console.error('Failed to get app version:', err);
+         setAppVersion(DEFAULT_APP_VERSION); // 降级方案
+        }
         await loadAppInfo();
         await checkN8nStatus();
 
@@ -700,7 +707,17 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
             </div>
             <div className="service-address">
               <span className="address-label">{t("ui.local_address")}</span>
-              <span className="address-value">{N8N_LOCAL_ADDRESS}</span>
+              <span className="address-value">
+                 <a
+                    href={N8N_LOCAL_ADDRESS}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="tunnel-link"
+                  >
+                    {N8N_LOCAL_ADDRESS}
+                  </a>
+                  {t("ui.download_flow_tips")}
+                </span>
             </div>
           </div>
 

@@ -39,6 +39,7 @@ export const en: Translations = {
     open_in_new_window: 'Open in new window',
     public_address: 'Public address:',
     local_address: 'Local address:',
+    download_flow_tips: " (If you want to export workflows, you can open this local connection in a browser to do so)" ,
     tunnel: 'Cloudflare Tunnel',
     n8n_service: 'n8n Service',
     node_unblock: 'Node Unblock',

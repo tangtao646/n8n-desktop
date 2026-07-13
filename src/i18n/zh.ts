@@ -39,6 +39,7 @@ export const zh: Translations = {
     open_in_new_window: '在新窗口中打开',
     public_address: '公网地址:',
     local_address: '本地地址:',
+    download_flow_tips: " (如果要导出工作流，可以用浏览器打开这个本地连接进行操作)" ,
     tunnel: 'Cloudflare 隧道',
     n8n_service: 'n8n 服务',
     node_unblock: '节点解禁',

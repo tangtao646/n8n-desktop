@@ -39,6 +39,7 @@ export interface Translations {
     open_in_new_window: string;
     public_address: string;
     local_address: string;
+    download_flow_tips:string;
     tunnel: string;
     n8n_service: string;
     node_unblock: string;
