@@ -1,84 +1,85 @@
-# .github/workflows/release.yml
-name: Release Control Hub
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
-  # 核心改动：允许在 GitHub 网页上手动点击运行并勾选平台
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: '请输入发布的版本号 (例如 v1.0.3)'
-        required: true
-        default: 'v1.0.0'
-      build_mac_arm:
-        description: '是否打包 macOS (M1/M2/M3 ARM版)'
-        type: boolean
-        default: true
-      build_mac_intel:
-        description: '是否打包 macOS (Intel 芯片版)'
-        type: boolean
-        default: true
-      build_windows:
-        description: '是否打包 Windows'
-        type: boolean
-        default: true
-      build_linux:
-        description: '是否打包 Linux (Ubuntu)'
-        type: boolean
-        default: true
 
 permissions:
   contents: write
 
+env:
+  TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+  TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
 jobs:
-  # ----------------- 1. macOS ARM (M1/M2/M3) 任务 -----------------
-  mac_arm:
-    if: |
-      github.event_name == 'push' || 
-      (github.event_name == 'workflow_dispatch' && inputs.build_mac_arm == true)
-    uses: ./.github/workflows/build-template.yml
-    with:
-      platform: 'macos-latest'
-      arch: 'aarch64'
-      args: '--target aarch64-apple-darwin'
-      tag_name: ${{ github.ref_name || inputs.tag_name }}
-    secrets: inherit # 继承父工作流的 TAURI_PRIVATE_KEY 等密钥
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 分开 macOS - Apple Silicon (ARM)
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            arch: 'aarch64'
+          # 分开 macOS - Intel (x86_64)
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            arch: 'x86_64'
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'ubuntu-latest'
+            args: ''
 
-  # ----------------- 2. macOS Intel 任务 -----------------
-  mac_intel:
-    if: |
-      github.event_name == 'push' || 
-      (github.event_name == 'workflow_dispatch' && inputs.build_mac_intel == true)
-    uses: ./.github/workflows/build-template.yml
-    with:
-      platform: 'macos-latest'
-      arch: 'x86_64'
-      args: '--target x86_64-apple-darwin'
-      tag_name: ${{ github.ref_name || inputs.tag_name }}
-    secrets: inherit
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  # ----------------- 3. Windows 任务 -----------------
-  windows:
-    if: |
-      github.event_name == 'push' || 
-      (github.event_name == 'workflow_dispatch' && inputs.build_windows == true)
-    uses: ./.github/workflows/build-template.yml
-    with:
-      platform: 'windows-latest'
-      args: ''
-      tag_name: ${{ github.ref_name || inputs.tag_name }}
-    secrets: inherit
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-  # ----------------- 4. Linux 任务 -----------------
-  linux:
-    if: |
-      github.event_name == 'push' || 
-      (github.event_name == 'workflow_dispatch' && inputs.build_linux == true)
-    uses: ./.github/workflows/build-template.yml
-    with:
-      platform: 'ubuntu-latest'
-      args: ''
-      tag_name: ${{ github.ref_name || inputs.tag_name }}
-    secrets: inherit
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: 'pnpm-lock.yaml'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          # 关键：根据当前矩阵安装对应的 Target
+          targets: ${{ matrix.platform == 'macos-latest' && (matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin') || '' }}
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 强制 Linux 只打 AppImage
+          TAURI_BUNDLE_TARGETS: ${{ matrix.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'n8n Desktop ${{ github.ref_name }}'
+          releaseBody: |
+            n8n Desktop ${{ github.ref_name }} 发布！
+            
+            - **macOS (M1/M2/M3)**: 下载 `aarch64.dmg`
+            - **macOS (Intel)**: 下载 `x64.dmg`
+            - **Windows**: 下载 `.exe`
+            - **Linux**: 下载 `.AppImage`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
