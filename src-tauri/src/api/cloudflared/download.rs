@@ -6,6 +6,7 @@ use tauri::{AppHandle, Runtime, Window};
 use crate::api::cloudflared::config::PlatformDownloadConfig;
 use crate::api::cloudflared::error::{CloudflaredError, CloudflaredResult};
 use crate::api::cloudflared::path_resolver::CloudflaredPathResolver;
+use crate::i18n;
 use crate::services::downloader;
 
 /// 下载管理器
@@ -36,7 +37,7 @@ impl DownloadManager {
 
         // 需要窗口句柄进行下载
         let window = window.ok_or_else(|| {
-            CloudflaredError::download("下载 cloudflared 需要窗口句柄".to_string())
+            CloudflaredError::download(i18n::t("cloudflared.download.needs_window"))
         })?;
 
         // 获取平台配置
@@ -84,7 +85,7 @@ impl DownloadManager {
             "cloudflared".to_string(),
         )
         .await
-        .map_err(|error| CloudflaredError::download(format!("下载 cloudflared 失败: {}", error)))
+        .map_err(|error| CloudflaredError::download(format!("{}: {}", i18n::t("cloudflared.download.failed"), error)))
     }
 
     /// 处理下载的文件（解压或移动）
@@ -101,7 +102,8 @@ impl DownloadManager {
             // 清理临时文件
             std::fs::remove_file(temp_path).map_err(|error| {
                 CloudflaredError::filesystem(format!(
-                    "删除临时文件 '{}' 失败: {}",
+                    "{} '{}': {}",
+                    i18n::t("fs.cannot_delete_temp_file"),
                     temp_path.display(),
                     error
                 ))
@@ -111,7 +113,8 @@ impl DownloadManager {
             if final_path.exists() {
                 std::fs::remove_file(final_path).map_err(|error| {
                     CloudflaredError::filesystem(format!(
-                        "删除现有文件 '{}' 失败: {}",
+                        "{} '{}': {}",
+                        i18n::t("fs.cannot_delete_existing_file"),
                         final_path.display(),
                         error
                     ))
@@ -120,7 +123,8 @@ impl DownloadManager {
 
             std::fs::rename(temp_path, final_path).map_err(|error| {
                 CloudflaredError::filesystem(format!(
-                    "移动文件到 '{}' 失败: {}",
+                    "{} '{}': {}",
+                    i18n::t("fs.cannot_move_to"),
                     final_path.display(),
                     error
                 ))
@@ -143,7 +147,8 @@ impl DownloadManager {
 
         let tar_gz_file = File::open(archive_path).map_err(|error| {
             CloudflaredError::filesystem(format!(
-                "无法打开压缩包 '{}': {}",
+                "{} '{}': {}",
+                i18n::t("fs.cannot_open_archive"),
                 archive_path.display(),
                 error
             ))
@@ -153,21 +158,22 @@ impl DownloadManager {
         let mut archive = Archive::new(tar_decoder);
 
         for entry_result in archive.entries().map_err(|error| {
-            CloudflaredError::extraction(format!("读取压缩包条目失败: {}", error))
+            CloudflaredError::extraction(format!("{}: {}", i18n::t("fs.cannot_read_archive_entry"), error))
         })? {
             let mut entry = entry_result.map_err(|error| {
-                CloudflaredError::extraction(format!("处理压缩包条目失败: {}", error))
+                CloudflaredError::extraction(format!("{}: {}", i18n::t("fs.cannot_read_archive_entry"), error))
             })?;
 
             let entry_path = entry.path().map_err(|error| {
-                CloudflaredError::extraction(format!("获取条目路径失败: {}", error))
+                CloudflaredError::extraction(format!("{}: {}", i18n::t("fs.cannot_get_entry_path"), error))
             })?;
 
             // 匹配名为 "cloudflared" 的文件（忽略目录结构）
             if entry_path.file_name().and_then(|name| name.to_str()) == Some("cloudflared") {
                 let mut output_file = File::create(destination_path).map_err(|error| {
                     CloudflaredError::filesystem(format!(
-                        "创建目标文件 '{}' 失败: {}",
+                        "{} '{}': {}",
+                        i18n::t("fs.cannot_create_target_file"),
                         destination_path.display(),
                         error
                     ))
@@ -175,7 +181,8 @@ impl DownloadManager {
 
                 copy(&mut entry, &mut output_file).map_err(|error| {
                     CloudflaredError::filesystem(format!(
-                        "提取文件到 '{}' 失败: {}",
+                        "{} '{}': {}",
+                        i18n::t("fs.cannot_extract_to"),
                         destination_path.display(),
                         error
                     ))
@@ -186,7 +193,8 @@ impl DownloadManager {
         }
 
         Err(CloudflaredError::extraction(format!(
-            "压缩包 '{}' 中未找到 cloudflared 二进制文件",
+            "{} '{}'",
+            i18n::t("cloudflared.extraction.binary_not_found"),
             archive_path.display()
         )))
     }
@@ -205,7 +213,7 @@ impl DownloadManager {
                 ),
             )
             .map_err(|error| {
-                CloudflaredError::permission(format!("设置文件权限失败: {}", error))
+                CloudflaredError::permission(format!("{}: {}", i18n::t("cloudflared.permission_set_failed"), error))
             })?;
 
             // macOS 特定：移除隔离属性

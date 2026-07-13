@@ -1,3 +1,4 @@
+use crate::i18n;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::env;
@@ -92,7 +93,7 @@ pub fn get_node_url() -> Result<String, String> {
         ("macos", "aarch64") => Ok(format_nodejs_url("darwin-arm64", "tar.gz")),
         ("macos", "x86_64") => Ok(format_nodejs_url("darwin-x64", "tar.gz")),
         ("windows", _) => Ok(format_nodejs_url("win-x64", "zip")),
-        _ => Err(format!("不支持的平台架构: {platform} {architecture}")),
+        _ => Err(format!("{}: {platform} {architecture}", i18n::t("runtime.unsupported_platform"))),
     }
 }
 
@@ -221,7 +222,7 @@ fn create_and_start_n8n_process(config: &N8nStartConfig) -> Result<Child, String
 
     command
         .spawn()
-        .map_err(|error| format!("启动 n8n 进程失败: {error}"))
+        .map_err(|error| format!("{}: {error}", i18n::t("process.spawn_failed")))
 }
 
 /// 构建 n8n 命令
@@ -229,7 +230,7 @@ fn build_n8n_command(config: &N8nStartConfig) -> Result<Command, String> {
     let user_data_str = config
         .user_data_dir
         .to_str()
-        .ok_or("用户数据目录路径包含无效字符".to_string())?;
+        .ok_or(i18n::t("process.invalid_user_data_path"))?;
 
     let mut command = Command::new(&config.node_path);
 

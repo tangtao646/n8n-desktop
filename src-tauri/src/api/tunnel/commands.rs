@@ -10,6 +10,7 @@ use super::models::{
 use super::n8n_integration::restart_n8n_with_env;
 use super::runner::{TunnelMonitor, TunnelRunner};
 use super::state::{tunnel_config_lock, tunnel_running_lock, tunnel_url_lock};
+use crate::i18n;
 use crate::services::manager::PROCESS_MANAGER;
 
 /// 启动隧道
@@ -28,7 +29,7 @@ pub async fn start_tunnel<R: Runtime>(
     let runner = TunnelRunner::new(cloudflared_path, cfg.tunnel_mode.clone());
     let mut child = runner.spawn().map_err(|e| e.to_string())?;
 
-    let stderr = child.stderr.take().ok_or("无法捕获标准错误流")?;
+    let stderr = child.stderr.take().ok_or(i18n::t("tunnel.cannot_capture_stderr"))?;
     *tunnel_running_lock() = true;
 
     // 3. 异步监听 (非阻塞)
@@ -149,12 +150,12 @@ pub fn check_tunnel_health<R: Runtime>(_app: AppHandle<R>) -> Result<TunnelHealt
     let running = *tunnel_running_lock();
     let (status, msg) = if running {
         if url.is_some() {
-            (TunnelHealthStatus::Healthy, "Healthy")
+            (TunnelHealthStatus::Healthy, i18n::t("tunnel.health.healthy"))
         } else {
-            (TunnelHealthStatus::Connecting, "Connecting")
+            (TunnelHealthStatus::Connecting, i18n::t("tunnel.health.connecting"))
         }
     } else {
-        (TunnelHealthStatus::Stopped, "Stopped")
+        (TunnelHealthStatus::Stopped, i18n::t("tunnel.health.stopped"))
     };
     Ok(TunnelHealth {
         status,
@@ -181,10 +182,10 @@ pub fn apply_tunnel_config<R: Runtime>(
     match &tunnel_mode {
         TunnelMode::Token { token, domain } => {
             if token.trim().is_empty() {
-                return Err("Token 模式需要提供 Cloudflare Tunnel Token".into());
+                return Err(i18n::t("tunnel.token_mode.needs_token"));
             }
             if domain.trim().is_empty() {
-                return Err("Token 模式需要提供自定义域名".into());
+                return Err(i18n::t("tunnel.token_mode.needs_domain"));
             }
         }
         TunnelMode::Temporary => {

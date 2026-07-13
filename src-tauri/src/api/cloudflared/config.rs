@@ -2,6 +2,7 @@
 //!
 //! 包含常量定义、平台配置和下载配置。
 
+use crate::i18n;
 use std::env;
 
 /// Cloudflared GitHub Releases 基础 URL
@@ -55,7 +56,7 @@ impl PlatformDownloadConfig {
                 is_archive: false,
                 final_binary_name: "cloudflared".to_string(),
             }),
-            os => Err(format!("当前操作系统平台暂不支持: {}", os)),
+            os => Err(format!("{}: {}", i18n::t("cloudflared.unsupported_platform"), os)),
         }
     }
 

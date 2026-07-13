@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::api::cloudflared::error::{CloudflaredError, CloudflaredResult};
+use crate::i18n;
 
 /// 安装管理器
 #[derive(Debug, Clone)]
@@ -22,7 +23,8 @@ impl InstallManager {
             .output()
             .map_err(|error| {
                 CloudflaredError::command_execution(format!(
-                    "执行 cloudflared 版本检查失败: {}",
+                    "{}: {}",
+                    i18n::t("cloudflared.version.exec_failed"),
                     error
                 ))
             })?;
@@ -55,7 +57,7 @@ impl InstallManager {
         {
             use std::os::unix::fs::PermissionsExt;
             let metadata = std::fs::metadata(binary_path).map_err(|error| {
-                CloudflaredError::filesystem(format!("获取文件元数据失败: {}", error))
+                CloudflaredError::filesystem(format!("{}: {}", i18n::t("fs.cannot_get_metadata"), error))
             })?;
 
             if metadata.permissions().mode() & 0o111 == 0 {
@@ -81,12 +83,12 @@ impl InstallManager {
 
         if system_path.exists() {
             fs::remove_file(system_path).map_err(|error| {
-                CloudflaredError::filesystem(format!("删除现有文件失败: {}", error))
+                CloudflaredError::filesystem(format!("{}: {}", i18n::t("fs.cannot_delete_existing_file"), error))
             })?;
         }
 
         fs::copy(binary_path, system_path)
-            .map_err(|error| CloudflaredError::filesystem(format!("复制文件失败: {}", error)))?;
+            .map_err(|error| CloudflaredError::filesystem(format!("{}: {}", i18n::t("cloudflared.copy_failed"), error)))?;
 
         // 设置权限
         fs::set_permissions(
@@ -95,7 +97,7 @@ impl InstallManager {
                 crate::api::cloudflared::config::UNIX_EXECUTABLE_PERMISSIONS,
             ),
         )
-        .map_err(|error| CloudflaredError::permission(format!("设置权限失败: {}", error)))?;
+        .map_err(|error| CloudflaredError::permission(format!("{}: {}", i18n::t("cloudflared.permission_set_failed"), error)))?;
 
         Ok(())
     }
@@ -112,19 +114,19 @@ impl InstallManager {
         // 创建目录
         if let Some(parent) = system_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                CloudflaredError::filesystem(format!("创建目录失败: {}", error))
+                CloudflaredError::filesystem(format!("{}: {}", i18n::t("fs.cannot_create_dir"), error))
             })?;
         }
 
         // 复制文件
         fs::copy(binary_path, system_path)
-            .map_err(|error| CloudflaredError::filesystem(format!("复制文件失败: {}", error)))?;
+            .map_err(|error| CloudflaredError::filesystem(format!("{}: {}", i18n::t("cloudflared.copy_failed"), error)))?;
 
         // 添加到 PATH（需要管理员权限）
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let environment = hkcu
             .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-            .map_err(|error| CloudflaredError::filesystem(format!("打开注册表失败: {}", error)))?;
+            .map_err(|error| CloudflaredError::filesystem(format!("{}: {}", i18n::t("cloudflared.registry_failed"), error)))?;
 
         let current_path: String = environment
             .get_value("Path")
@@ -133,7 +135,7 @@ impl InstallManager {
         let program_files_path = system_path
             .parent()
             .and_then(|p| p.to_str())
-            .ok_or_else(|| CloudflaredError::filesystem("无法获取程序路径".to_string()))?;
+            .ok_or_else(|| CloudflaredError::filesystem(i18n::t("fs.cannot_get_program_path")))?;
 
         if !current_path.contains(program_files_path) {
             let new_path = if current_path.is_empty() {
@@ -143,7 +145,7 @@ impl InstallManager {
             };
 
             environment.set_value("Path", &new_path).map_err(|error| {
-                CloudflaredError::filesystem(format!("设置注册表失败: {}", error))
+                CloudflaredError::filesystem(format!("{}: {}", i18n::t("cloudflared.registry_failed"), error))
             })?;
         }
 

@@ -5,6 +5,7 @@ use tauri::{AppHandle, Runtime, Window};
 
 // 从父模块导入功能模块
 use crate::api::{cloudflared, n8n, tunnel};
+use crate::i18n;
 
 // 重新导出类型定义，但不重新导出函数（避免宏冲突）
 pub use cloudflared::{CloudflaredCacheInfo, CloudflaredVersionInfo};
@@ -163,13 +164,13 @@ pub async fn apply_tunnel_config<R: Runtime>(
         serde_json::Value::String(s) => match s.as_str() {
             "Temporary" | "temporary" => tunnel::TunnelMode::Temporary,
             "Token" | "token" => {
-                let token = tunnel_token.ok_or("Token 模式需要提供 Cloudflare Tunnel Token")?;
+                let token = tunnel_token.ok_or(i18n::t("tunnel.token_mode.needs_token"))?;
                 let domain = custom_domain
                     .clone()
-                    .ok_or("Token 模式需要提供自定义域名")?;
+                    .ok_or(i18n::t("tunnel.token_mode.needs_domain"))?;
                 tunnel::TunnelMode::Token { token, domain }
             }
-            _ => return Err(format!("未知的隧道模式: {s}")),
+            _ => return Err(format!("{}: {s}", i18n::t("tunnel.unknown_mode"))),
         },
         // 处理对象格式：{ Token: { token, domain } }
         serde_json::Value::Object(obj) => {
@@ -178,22 +179,22 @@ pub async fn apply_tunnel_config<R: Runtime>(
                     let token = token_data
                         .get("token")
                         .and_then(|v| v.as_str())
-                        .ok_or("Token 对象必须包含 'token' 字段")?
+                        .ok_or(i18n::t("tunnel.token_obj.needs_token_field"))?
                         .to_string();
                     let domain = token_data
                         .get("domain")
                         .and_then(|v| v.as_str())
-                        .ok_or("Token 对象必须包含 'domain' 字段")?
+                        .ok_or(i18n::t("tunnel.token_obj.needs_domain_field"))?
                         .to_string();
                     tunnel::TunnelMode::Token { token, domain }
                 } else {
-                    return Err("Token 字段必须是一个对象".to_string());
+                    return Err(i18n::t("tunnel.token_field.must_be_object"));
                 }
             } else {
-                return Err("隧道模式对象必须包含 'Token' 或其他有效字段".to_string());
+                return Err(i18n::t("tunnel.mode_obj.must_contain_token"));
             }
         }
-        _ => return Err("隧道模式必须是字符串或对象".to_string()),
+        _ => return Err(i18n::t("tunnel.mode.must_be_string_or_object")),
     };
 
     tunnel::apply_tunnel_config(
@@ -210,4 +211,14 @@ pub async fn toggle_sidebar<R: Runtime>(_window: Window<R>) -> Result<bool, Stri
     // 这里可以添加实际的布局调整逻辑
     // 目前先返回一个简单的状态切换
     Ok(true)
+}
+
+/// 设置应用语言（前端调用）
+#[tauri::command]
+pub fn set_language(lang: String) {
+    let l = match lang.as_str() {
+        "en" | "EN" | "En" => i18n::Lang::En,
+        _ => i18n::Lang::Zh,
+    };
+    i18n::set_language(l);
 }

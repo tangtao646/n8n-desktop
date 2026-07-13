@@ -3,6 +3,7 @@
 //! 提供全局状态管理、健康检查和环境变量构造功能。
 
 use crate::api::tunnel::{tunnel_config_lock, tunnel_running_lock, tunnel_url_lock};
+use crate::i18n;
 use crate::services::manager::PROCESS_MANAGER;
 use reqwest;
 use std::collections::HashMap;
@@ -170,7 +171,7 @@ impl N8nHealthChecker {
             .timeout(HEALTH_CHECK_TIMEOUT)
             .build()?;
 
-        let mut last_error_msg = String::from("未启动检查");
+        let mut last_error_msg = i18n::t("n8n.state.no_check_run");
 
         for retry in 0..HEALTH_CHECK_RETRIES {
             // 每一轮重试，依次尝试所有端点
@@ -204,7 +205,7 @@ impl N8nHealthChecker {
             .get(url)
             .send()
             .await
-            .map_err(|e| format!("网络错误: {e}"))?;
+            .map_err(|e| format!("{}: {e}", i18n::t("n8n.state.network_error")))?;
 
         let status = response.status();
 
@@ -212,12 +213,12 @@ impl N8nHealthChecker {
             let body = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "无法读取Body".into());
+                .unwrap_or_else(|_| i18n::t("n8n.state.cannot_read_body"));
             return Ok(format!("healthy - {status} - {body}"));
         }
 
         // 可以在这里细化错误分类，哪些是瞬态的，哪些是永久的
-        Err(format!("HTTP 状态码: {status}"))
+        Err(format!("{}: {status}", i18n::t("n8n.state.http_status")))
     }
 }
 
@@ -243,7 +244,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
     let is_running = {
         let manager = PROCESS_MANAGER
             .lock()
-            .map_err(|_| N8nCoreError::Process("PROCESS_MANAGER mutex poisoned".to_string()))?;
+            .map_err(|_| N8nCoreError::Process(i18n::t("n8n.state.process_manager_poisoned")))?;
         manager.has_child()
     };
 
@@ -258,7 +259,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
     let app_path = app
         .path()
         .app_data_dir()
-        .map_err(|e| N8nCoreError::Path(format!("Failed to get app data dir: {e}")))?;
+        .map_err(|e| N8nCoreError::Path(format!("{}: {e}", i18n::t("cloudflared.path.app_data_dir_failed"))))?;
 
     println!("[DEBUG] 应用路径: {}", app_path.display());
 
@@ -268,7 +269,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
     if !n8n_bin.exists() {
         println!("[DEBUG] n8n 二进制文件不存在");
         return Err(N8nCoreError::Installation(
-            "N8N binary not found".to_string(),
+            i18n::t("n8n.binary_not_found"),
         ));
     }
 
@@ -279,7 +280,7 @@ pub async fn set_nodes_unlocked<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
     if !node_path.exists() {
         println!("[DEBUG] node 二进制文件不存在");
         return Err(N8nCoreError::Installation(
-            "Node binary not found".to_string(),
+            i18n::t("node.not_found"),
         ));
     }
 

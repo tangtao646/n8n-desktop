@@ -1,4 +1,5 @@
 pub mod api;
+pub mod i18n;
 pub mod services;
 
 use tauri::RunEvent;
@@ -35,6 +36,8 @@ pub fn run() {
             api::commands::check_cloudflared_version,
             // 侧边栏管理
             api::commands::toggle_sidebar,
+            // 国际化
+            api::commands::set_language,
         ])
         .on_window_event(|_window, event| {
             match event {

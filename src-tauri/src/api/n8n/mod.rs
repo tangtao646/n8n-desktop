@@ -15,6 +15,7 @@ pub use error::{N8nCoreError, N8nResult};
 pub use installer::{calculate_file_sha256, fetch_latest_sha256, verify_file_hash, N8nInstaller};
 pub use state::{construct_n8n_envs, get_nodes_unlocked, set_nodes_unlocked, N8nHealthChecker};
 
+use crate::i18n;
 use crate::services::{downloader, manager};
 use std::fs;
 use tauri::{AppHandle, Manager, Runtime, Window};
@@ -69,16 +70,12 @@ pub fn launch_n8n<R: Runtime>(app: AppHandle<R>) -> N8nResult<()> {
     let node_path = manager::get_node_binary_path(runtime_dir);
 
     if !node_path.exists() {
-        return Err(N8nCoreError::Installation(
-            "NODE_NOT_FOUND: 请先执行 setup_runtime".to_string(),
-        ));
+        return Err(N8nCoreError::Installation(i18n::t("node.not_found")));
     }
 
     let n8n_bin = app_path.join("n8n-core/node_modules/n8n/bin/n8n");
     if !n8n_bin.exists() {
-        return Err(N8nCoreError::Installation(
-            "N8N_CORE_NOT_FOUND: 请先执行 setup_n8n".to_string(),
-        ));
+        return Err(N8nCoreError::Installation(i18n::t("n8n.core_not_found")));
     }
 
     let data_dir = app_path.join("n8n-data");
@@ -105,7 +102,7 @@ pub fn shutdown_n8n() -> N8nResult<()> {
     // 1. 使用 map_err 统一错误转换，减少缩进
     let mut manager = PROCESS_MANAGER
         .lock()
-        .map_err(|_| N8nCoreError::Process("PROCESS_MANAGER 锁已被毒化 (Poisoned)".into()))?;
+        .map_err(|_| N8nCoreError::Process(i18n::t("n8n.state.process_manager_poisoned")))?;
 
     // 2. 执行 kill
     manager.kill_child();

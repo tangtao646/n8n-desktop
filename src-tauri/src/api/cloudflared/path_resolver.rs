@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::api::cloudflared::config::CACHE_INFO_FILENAME;
 use crate::api::cloudflared::error::{CloudflaredError, CloudflaredResult};
 use crate::api::cloudflared::platform::PlatformDetector;
+use crate::i18n;
 
 /// Cloudflared 路径解析器
 #[derive(Debug, Clone)]
@@ -132,7 +133,7 @@ impl CloudflaredPathResolver {
     fn find_in_system_path(&self) -> CloudflaredResult<String> {
         which::which("cloudflared")
             .map(|path| path.to_string_lossy().to_string())
-            .map_err(|_| CloudflaredError::path_not_found("系统中未找到 cloudflared 可执行文件"))
+            .map_err(|_| CloudflaredError::path_not_found(i18n::t("cloudflared.path.not_found_in_system")))
     }
 
     /// 如果缓存信息缺失，尝试创建它
