@@ -265,7 +265,7 @@ fn configure_process_stdio(command: &mut Command) {
 }
 
 /// 应用平台特定的配置
-fn apply_platform_specific_config(_command: &mut Command) {
+fn apply_platform_specific_config(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
