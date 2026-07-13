@@ -891,7 +891,7 @@ body {
   background-color: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 16px;
+  padding: 8px;
   transition: all 0.2s ease;
 }
 
@@ -1340,7 +1340,7 @@ input:disabled + .slider {
 }
 
 .wizard-step-content {
-  padding-left: 32px;
+  padding-left: 16px;
 }
 
 .step-description {

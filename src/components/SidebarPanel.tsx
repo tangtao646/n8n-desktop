@@ -192,7 +192,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
     }
 
     // 显示错误提示给用户
-    alert(`❌ ${context}\n\n${userMessage}\n\n错误详情: ${errorMessage}`);
+    alert(`${context}\n\n${userMessage}\n\n错误详情: ${errorMessage}`);
 
     return userMessage;
   }, []);
@@ -266,7 +266,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
     // 再次检查配置有效性（防止竞态条件）
     if (!isTunnelConfigValid()) {
-      alert("❌ 启动隧道失败\n\n请确保隧道配置完整且有效");
+      alert("启动隧道失败\n\n请确保隧道配置完整且有效");
       return;
     }
 
@@ -371,23 +371,23 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       // 验证输入
       if (appState.tunnelMode === "token") {
         if (!tokenToSave) {
-          alert("❌ 配置验证失败\n\n请输入 Cloudflare Tunnel Token");
+          alert("配置验证失败\n\n请输入 Cloudflare Tunnel Token");
           updateLoadingState({ domainConfig: false });
           return;
         }
         // 简单的 Token 格式验证（Cloudflare Token 通常很长）
         if (tokenToSave.length < 50) {
-          alert("❌ 配置验证失败\n\nToken 格式似乎不正确，请确保复制完整的 Token\n\nCloudflare Tunnel Token 通常长度超过 50 个字符");
+          alert("配置验证失败\n\nToken 格式似乎不正确，请确保复制完整的 Token\n\nCloudflare Tunnel Token 通常长度超过 50 个字符");
           updateLoadingState({ domainConfig: false });
           return;
         }
         if (!domainToSave) {
-          alert("❌ 配置验证失败\n\n请输入自定义域名");
+          alert("配置验证失败\n\n请输入自定义域名");
           updateLoadingState({ domainConfig: false });
           return;
         }
         if (!domainToSave.includes("://")) {
-          alert("❌ 配置验证失败\n\n请输入完整的域名（包含 http:// 或 https://）\n\n例如: https://your-domain.com");
+          alert("配置验证失败\n\n请输入完整的域名（包含 http:// 或 https://）\n\n例如: https://your-domain.com");
           updateLoadingState({ domainConfig: false });
           return;
         }
@@ -404,7 +404,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         tunnelToken: tokenToSave || null,
       });
 
-      alert("✅ 配置保存成功\n\n隧道配置已保存并应用");
+      alert("配置保存成功\n\n隧道配置已保存并应用");
     } catch (err) {
       handleError(err, "保存隧道配置失败");
     } finally {
@@ -571,7 +571,6 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
         <div className="tunnel-wizard-step">
           <div className="wizard-step-header">
-            <div className="step-number">2</div>
             <div className="step-title">{t("ui.configure_tunnel")}</div>
           </div>
           <div className="wizard-step-content">
@@ -607,7 +606,6 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
       <div className="tunnel-wizard-step">
         <div className="wizard-step-header">
-          <div className="step-number">3</div>
           <div className="step-title">{t("ui.starting")}</div>
         </div>
         <div className="wizard-step-content">
@@ -648,7 +646,6 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
         <div className="tunnel-wizard-step">
           <div className="wizard-step-header">
-            <div className="step-number">4</div>
             <div className="step-title">{t("ui.tunnel_running")}</div>
           </div>
           <div className="wizard-step-content">
@@ -662,7 +659,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                     rel="noopener noreferrer"
                     className="tunnel-link"
                   >
-                    {appState.tunnelUrl.replace('https://', '')}
+                    {appState.tunnelUrl}
                   </a>
                 </div>
                 {/* 刷新按钮已移除，由自动同步机制处理 */}
@@ -782,7 +779,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
                     rel="noopener noreferrer"
                     className="tunnel-link"
                   >
-                    {appState.tunnelUrl.replace('https://', '')}
+                    {appState.tunnelUrl}
                   </a>
                 </div>
                 {/* 刷新按钮已移除，由自动同步机制处理 */}
@@ -837,6 +834,18 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         <p className="text-xs text-gray-500 mt-2">
           {appState.tunnelMode === "temporary" && t("ui.random_temporary_domain_desc")}
           {appState.tunnelMode === "token" && t("ui.fixed_custom_domain_desc")}
+          {appState.tunnelMode === "token" && (
+            <span className="text-blue-600">
+                  <a
+                    href={"https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="tunnel-link"
+                  >
+                    {"Cloudflare Tunnel Official Documentation"}
+                  </a>
+            </span>
+          )}
         </p>
       </div>
 
@@ -849,13 +858,13 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
               {t("ui.custom_domain")}
             </label>
 
-            <input
-              type="text"
+            <textarea
               value={appState.tunnelDomain}
               onChange={(e) => updateAppState({ tunnelDomain: e.target.value })}
               placeholder="https://your-domain.com"
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 "
               disabled={loading.domainConfig}
+              rows={2}
             />
 
 
@@ -871,7 +880,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
               onChange={(e) => updateAppState({ tunnelToken: e.target.value })}
               placeholder={t("ui.paste_tunnel_token")}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-              rows={3}
+              rows={5}
               disabled={loading.domainConfig}
             />
 
