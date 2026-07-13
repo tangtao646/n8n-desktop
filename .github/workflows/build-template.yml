@@ -1,0 +1,76 @@
+name: Reusable Tauri Build
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      args:
+        required: false
+        type: string
+        default: ''
+      arch:
+        required: false
+        type: string
+        default: ''
+      tag_name:
+        required: true
+        type: string
+
+env:
+  TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+  TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+jobs:
+  compile:
+    runs-on: ${{ inputs.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # 顺便帮你同步为你升级后的 Node.js 22
+          cache: 'pnpm'
+          cache-dependency-path: 'pnpm-lock.yaml'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ inputs.platform == 'macos-latest' && (inputs.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin') || '' }}
+
+      - name: Install dependencies (Ubuntu only)
+        if: inputs.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_BUNDLE_TARGETS: ${{ inputs.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
+        with:
+          tagName: ${{ inputs.tag_name }}
+          releaseName: 'n8n Desktop ${{ inputs.tag_name }}'
+          releaseBody: |
+            n8n Desktop ${{ inputs.tag_name }} 发布！
+            
+            - **macOS (M1/M2/M3)**: 下载 `aarch64.dmg`
+            - **macOS (Intel)**: 下载 `x64.dmg`
+            - **Windows**: 下载 `.exe`
+            - **Linux**: 下载 `.AppImage`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ inputs.args }}
