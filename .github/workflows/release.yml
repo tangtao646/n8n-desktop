@@ -1,9 +1,24 @@
-name: Release
+name: Build & Release
 
 on:
+  # 1. 依然保留原有的 Tag 触发（正式发布）
   push:
     tags:
       - 'v*'
+  # 2. 增加手动触发支持（支持单平台、多平台测试打包）
+  workflow_dispatch:
+    inputs:
+      platform_filter:
+        description: '选择需要打包的平台 (仅在手动触发时生效)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - macos-aarch64
+          - macos-x86_64
+          - windows
+          - linux
 
 permissions:
   contents: write
@@ -18,30 +33,56 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 分开 macOS - Apple Silicon (ARM)
-          - platform: 'macos-latest'
+          - id: macos-aarch64
+            platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             arch: 'aarch64'
-          # 分开 macOS - Intel (x86_64)
-          - platform: 'macos-latest'
+          - id: macos-x86_64
+            platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
             arch: 'x86_64'
-          - platform: 'windows-latest'
+          - id: windows
+            platform: 'windows-latest'
             args: ''
-          - platform: 'ubuntu-latest'
+          - id: linux
+            platform: 'ubuntu-latest'
             args: ''
 
     runs-on: ${{ matrix.platform }}
+    
+    # 1. 移除原 Job 级别的 if 判断，让矩阵正常初始化
+
     steps:
+      # 2. 新增一个控制开关步骤：判断当前平台是否需要被跳过
+      - name: Check if this platform should run
+        id: check
+        shell: bash
+        run: |
+          # 如果是 Git Tag 触发，或者手动触发选择了 'all'，或者手动触发的选项正好匹配当前矩阵的 id
+          if [ "${{ github.event_name }}" = "push" ] || \
+             [ "${{ github.event.inputs.platform_filter }}" = "all" ] || \
+             [ "${{ github.event.inputs.platform_filter }}" = "${{ matrix.id }}" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "平台匹配成功，开始构建..."
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "平台不匹配，将跳过后续构建步骤。"
+          fi
+
       - name: Checkout repository
+        if: steps.check.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
+      # ... 中间省略 Node/Rust/前端依赖安装步骤，它们全部都要加上：if: steps.check.outputs.should_run == 'true' ...
+      # 举个例子：
       - name: Install pnpm
+        if: steps.check.outputs.should_run == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
       - name: Setup Node.js
+        if: steps.check.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -49,37 +90,57 @@ jobs:
           cache-dependency-path: 'pnpm-lock.yaml'
 
       - name: Install Rust stable
+        if: steps.check.outputs.should_run == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          # 关键：根据当前矩阵安装对应的 Target
           targets: ${{ matrix.platform == 'macos-latest' && (matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin') || '' }}
 
       - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-latest'
+        if: steps.check.outputs.should_run == 'true' && matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
+        if: steps.check.outputs.should_run == 'true'
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build and Release
+      # 场景 A：Tag 触发的正式发布
+      - name: Build and Release (For Tags / Full Workflow)
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'push'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 强制 Linux 只打 AppImage
           TAURI_BUNDLE_TARGETS: ${{ matrix.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'n8n Desktop ${{ github.ref_name }}'
           releaseBody: |
             n8n Desktop ${{ github.ref_name }} 发布！
-            
-            - **macOS (M1/M2/M3)**: 下载 `aarch64.dmg`
-            - **macOS (Intel)**: 下载 `x64.dmg`
-            - **Windows**: 下载 `.exe`
-            - **Linux**: 下载 `.AppImage`
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # 场景 B：手动触发的单平台/全平台测试打包
+      - name: Build Only (For Manual Trigger)
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_BUNDLE_TARGETS: ${{ matrix.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
+        with:
+          args: ${{ matrix.args }}
+
+      # 场景 B 延续：上传临时产物
+      - name: Upload Artifacts (For Manual Trigger)
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: n8n-desktop-${{ matrix.id }}
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          retention-days: 7
