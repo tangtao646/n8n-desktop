@@ -11,6 +11,8 @@ export interface Translations {
     hide_tunnel: string;
     tunnel_active: string;
     open_via_tunnel: string;
+    expand_sidebar: string;
+    collapse_sidebar: string;
   };
   status: {
     checking: string;
@@ -27,6 +29,8 @@ export interface Translations {
     startup_timeout: string;
     network_timeout: string;
     service_start_timeout: string;
+    install_verify_failed: string;
+    cloudflared_download_failed: string;
   };
   ui: {
     loading_n8n_interface: string;
@@ -78,6 +82,11 @@ export interface Translations {
     clear_cloudflared_cache_desc: string;
     instructions: string;
     risk_warning: string;
+    unknown_version: string;
+    days_ago: string;
+    domain_placeholder: string;
+    error_detail_prefix: string;
+    cloudflare_tunnel_doc_link: string;
   };
   buttons: {
     retry: string;
@@ -97,6 +106,29 @@ export interface Translations {
     update_check_complete: string;
     check_update_failed: string;
     operation_failed_retry: string;
+    unknown_error: string;
+    cloudflared_issue: string;
+    network_failure: string;
+    operation_timeout: string;
+    permission_denied: string;
+    download_failed: string;
+    auth_failed: string;
+    tunnel_start_config_invalid: string;
+    config_token_required: string;
+    config_token_format_invalid: string;
+    config_domain_required: string;
+    config_domain_format_invalid: string;
+    config_saved_with_apply: string;
+    cloudflared_download_failed_with_manual: string;
+    update_config_failed: string;
+    clear_cache_failed: string;
+    save_config_failed: string;
+  };
+  error_context: {
+    start_tunnel_failed: string;
+    stop_tunnel_failed: string;
+    save_tunnel_config_failed: string;
+    set_unblock_failed: string;
   };
   instructions: {
     random_temporary_domain: string;

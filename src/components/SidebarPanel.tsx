@@ -10,6 +10,7 @@ const TUNNEL_START_TIMEOUT_MS = 60000;
 const TUNNEL_STOP_TIMEOUT_MS = 5000;
 const N8N_LOCAL_ADDRESS = "http://localhost:5678";
 const DEFAULT_APP_VERSION = "1.0.2";
+const CLOUDFLARE_TUNNEL_DOC_URL = "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/";
 
 // ========== 类型定义 ==========
 type TunnelStatus = "offline" | "connecting" | "online" | "error";
@@ -169,33 +170,33 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
   const handleError = useCallback((error: unknown, context: string) => {
     console.error(`[SidebarPanel] ${context}:`, error);
 
-    let errorMessage = "发生未知错误";
-    let userMessage = "操作失败，请稍后重试";
+    let errorMessage = t("messages.unknown_error");
+    let userMessage = t("messages.operation_failed_retry");
 
     if (error instanceof Error) {
       errorMessage = error.message;
 
-      // 根据错误类型提供更友好的中文提示
+      // Provide user-friendly messages based on error type
       if (errorMessage.includes("cloudflared")) {
-        userMessage = "cloudflared 工具出现问题。请检查网络连接或手动安装 cloudflared。";
+        userMessage = t("messages.cloudflared_issue");
       } else if (errorMessage.includes("network") || errorMessage.includes("连接")) {
-        userMessage = "网络连接失败。请检查您的网络设置并重试。";
+        userMessage = t("messages.network_failure");
       } else if (errorMessage.includes("timeout") || errorMessage.includes("超时")) {
-        userMessage = "操作超时。请检查网络连接并重试。";
+        userMessage = t("messages.operation_timeout");
       } else if (errorMessage.includes("permission") || errorMessage.includes("权限")) {
-        userMessage = "权限不足。请检查文件系统权限或使用管理员权限运行。";
+        userMessage = t("messages.permission_denied");
       } else if (errorMessage.includes("download") || errorMessage.includes("下载")) {
-        userMessage = "下载失败。请检查网络连接或手动下载所需文件。";
+        userMessage = t("messages.download_failed");
       } else if (errorMessage.includes("auth") || errorMessage.includes("授权")) {
-        userMessage = "授权失败。请检查 Cloudflare 账号设置并确保已正确配置 API Token。";
+        userMessage = t("messages.auth_failed");
       }
     }
 
-    // 显示错误提示给用户
-    alert(`${context}\n\n${userMessage}\n\n错误详情: ${errorMessage}`);
+    // Display error to user
+    alert(`${context}\n\n${userMessage}\n\n${t("ui.error_detail_prefix")}: ${errorMessage}`);
 
     return userMessage;
-  }, []);
+  }, [t]);
 
 
 
@@ -266,7 +267,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
     // 再次检查配置有效性（防止竞态条件）
     if (!isTunnelConfigValid()) {
-      alert("启动隧道失败\n\n请确保隧道配置完整且有效");
+      alert(t("messages.tunnel_start_config_invalid"));
       return;
     }
 
@@ -301,7 +302,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           const newVersionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
 
           if (!newVersionInfo.installed) {
-            throw new Error("下载 cloudflared 失败，请检查网络连接或手动安装 cloudflared");
+            throw new Error(t("messages.cloudflared_download_failed_with_manual"));
           }
 
           if (newVersionInfo.path) {
@@ -309,7 +310,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           }
         } catch (downloadErr) {
           const errorMessage = downloadErr instanceof Error ? downloadErr.message : String(downloadErr);
-          throw new Error(`cloudflared 下载失败: ${errorMessage}. 请手动安装 cloudflared 或检查网络连接。`);
+          throw new Error(`${t("messages.cloudflared_download_failed_with_manual")}: ${errorMessage}`);
         }
       }
 
@@ -332,7 +333,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       });
       updateLoadingState({ tunnel: false });
 
-      handleError(err, "启动隧道失败");
+      handleError(err, t("error_context.start_tunnel_failed"));
     }
   }, [loading.tunnel, appState.tunnelStatus, appState.tunnelMode, appState.tunnelToken, appState.tunnelDomain, isTunnelConfigValid, updateLoadingState, updateAppState, handleError]);
 
@@ -355,7 +356,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       }, TUNNEL_STOP_TIMEOUT_MS);
     } catch (err) {
       updateLoadingState({ tunnel: false });
-      handleError(err, "停止隧道失败");
+      handleError(err, t("error_context.stop_tunnel_failed"));
     }
   }, [loading.tunnel, updateLoadingState, updateAppState, handleError]);
 
@@ -371,23 +372,23 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       // 验证输入
       if (appState.tunnelMode === "token") {
         if (!tokenToSave) {
-          alert("配置验证失败\n\n请输入 Cloudflare Tunnel Token");
+          alert(t("messages.config_token_required"));
           updateLoadingState({ domainConfig: false });
           return;
         }
         // 简单的 Token 格式验证（Cloudflare Token 通常很长）
         if (tokenToSave.length < 50) {
-          alert("配置验证失败\n\nToken 格式似乎不正确，请确保复制完整的 Token\n\nCloudflare Tunnel Token 通常长度超过 50 个字符");
+          alert(t("messages.config_token_format_invalid"));
           updateLoadingState({ domainConfig: false });
           return;
         }
         if (!domainToSave) {
-          alert("配置验证失败\n\n请输入自定义域名");
+          alert(t("messages.config_domain_required"));
           updateLoadingState({ domainConfig: false });
           return;
         }
         if (!domainToSave.includes("://")) {
-          alert("配置验证失败\n\n请输入完整的域名（包含 http:// 或 https://）\n\n例如: https://your-domain.com");
+          alert(t("messages.config_domain_format_invalid"));
           updateLoadingState({ domainConfig: false });
           return;
         }
@@ -404,9 +405,9 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         tunnelToken: tokenToSave || null,
       });
 
-      alert("配置保存成功\n\n隧道配置已保存并应用");
+      alert(t("messages.config_saved_with_apply"));
     } catch (err) {
-      handleError(err, "保存隧道配置失败");
+      handleError(err, t("error_context.save_tunnel_config_failed"));
     } finally {
       updateLoadingState({ domainConfig: false });
     }
@@ -422,7 +423,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
       await invoke("set_nodes_unlocked", { enabled });
     } catch (err) {
       updateAppState({ nodeUnblockEnabled: !enabled });
-      handleError(err, "设置节点解禁状态失败");
+      handleError(err, t("error_context.set_unblock_failed"));
     } finally {
       updateLoadingState({ nodeUnblock: false });
     }
@@ -520,7 +521,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         <button
           onClick={handleToggleSidebar}
           className="sidebar-toggle-btn-modern"
-          title="展开侧边栏"
+          title={t("app.expand_sidebar")}
         >
           <svg className="panel-left-open-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -751,7 +752,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           <div className="service-card">
             <div className="service-header">
               <div className="service-info">
-                <h4 className="service-name">Cloudflare 隧道</h4>
+                <h4 className="service-name">{t("ui.tunnel")}</h4>
                 <span className={`service-status ${color}`}>
                   {text}
                 </span>
@@ -771,7 +772,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
             {appState.tunnelStatus === "online" && appState.tunnelUrl && (
               <div className="tunnel-url-section">
-                <div className="tunnel-url-label">公网地址:</div>
+                <div className="tunnel-url-label">{t("ui.public_address")}</div>
                 <div className="tunnel-url-value">
                   <a
                     href={appState.tunnelUrl}
@@ -788,11 +789,11 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
 
             {cloudflaredInfo && (
               <div className="cloudflared-info">
-                <span className="info-label">cloudflared:</span>
+                <span className="info-label">{t("ui.cloudflared")}</span>
                 <span className={`info-value ${!cloudflaredInfo.installed ? 'not-installed' : ''}`}>
                   {cloudflaredInfo.installed
-                    ? `已安装 ${cloudflaredInfo.version || "未知版本"}`
-                    : "未安装 (点击隧道开关将自动下载)"}
+                    ? `${t("ui.installed")} ${cloudflaredInfo.version || t("ui.unknown_version")}`
+                    : t("ui.not_installed_click_to_download")}
                 </span>
               </div>
             )}
@@ -837,12 +838,12 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
           {appState.tunnelMode === "token" && (
             <span className="text-blue-600">
                   <a
-                    href={"https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/"}
+                    href={CLOUDFLARE_TUNNEL_DOC_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="tunnel-link"
                   >
-                    {"Cloudflare Tunnel Official Documentation"}
+                    {t("ui.cloudflare_tunnel_doc_link")}
                   </a>
             </span>
           )}
@@ -861,7 +862,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
             <textarea
               value={appState.tunnelDomain}
               onChange={(e) => updateAppState({ tunnelDomain: e.target.value })}
-              placeholder="https://your-domain.com"
+              placeholder={t("ui.domain_placeholder")}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 "
               disabled={loading.domainConfig}
               rows={2}
@@ -938,7 +939,7 @@ export default function SidebarPanel({ collapsed = false, onToggleSidebar, class
         <button
           onClick={handleToggleSidebar}
           className="sidebar-toggle-btn-modern"
-          title="折叠侧边栏"
+          title={t("app.collapse_sidebar")}
         >
           <svg className="panel-left-close-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>

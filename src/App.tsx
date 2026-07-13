@@ -209,7 +209,7 @@ export default function App() {
           }
 
           if (!checkInstalled) {
-            throw new Error("资源包已下载，但未能正确安装（验证失败）");
+            throw new Error(t("errors.install_verify_failed"));
           }
         }
 
@@ -228,7 +228,7 @@ export default function App() {
             // 下载完成后再次检查
             const newVersionInfo = await invoke<CloudflaredVersionInfo>("check_cloudflared_version");
             if (!newVersionInfo.installed) {
-              throw new Error("Failed to download cloudflared");
+              throw new Error(t("errors.cloudflared_download_failed"));
             }
           }
         } catch (err: any) {

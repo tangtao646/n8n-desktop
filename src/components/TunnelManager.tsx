@@ -425,7 +425,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
               </span>
               {cloudflaredInfo.cached && (
                 <span className="ml-2 text-xs bg-gray-100 px-2 py-1 rounded">
-                  {t("ui.cache")} ({cloudflaredInfo.cache_age_days || 0}天前)
+                   {t("ui.cache")} ({t("ui.days_ago", { n: cloudflaredInfo.cache_age_days || 0 })})
                 </span>
               )}
             </div>
@@ -478,7 +478,7 @@ export default function TunnelManager({ onStatusChange, className = "" }: Tunnel
                   type="text"
                   value={config.custom_domain || ""}
                   onChange={(e) => setConfig(prev => ({ ...prev, custom_domain: e.target.value }))}
-                  placeholder="https://your-domain.com"
+                   placeholder={t("ui.domain_placeholder")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">
