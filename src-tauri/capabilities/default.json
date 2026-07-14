@@ -7,6 +7,8 @@
   ],
   "permissions": [
     "core:default",
+    "shell:default",
+    "fs:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:app:allow-version"

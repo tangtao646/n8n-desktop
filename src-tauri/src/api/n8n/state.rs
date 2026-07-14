@@ -179,6 +179,7 @@ impl N8nHealthChecker {
                 match Self::attempt_ping(&client, endpoint).await {
                     Ok(msg) => return Ok(msg), // 任意一个成功，立即返回
                     Err(e) => {
+                        eprintln!(" 端点 {} 尝试失败: {}", endpoint, e);
                         last_error_msg = format!("端点 {}: {}", endpoint, e);
                         // 这里不 sleep，立即尝试下一个端点（Failover 逻辑）
                     }
