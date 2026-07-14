@@ -122,17 +122,28 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      # 场景 B：手动触发的单平台/全平台测试打包
-      - name: Build Only (For Manual Trigger)
+      # 场景 B：手动触发的单平台/全平台测试打包（同步发布到 Release 页面）
+      - name: Build and Create Test Release (For Manual Trigger)
         if: steps.check.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_BUNDLE_TARGETS: ${{ matrix.platform == 'ubuntu-latest' && 'appimage' || 'all' }}
         with:
+          #  手动触发没有 Git Tag，我们用分支名加构建号动态生成一个虚拟 Tag，如 test-main-42
+          tagName: ${{ format('test-{0}-{1}', github.ref_name, github.run_number) }}
+          #  动态生成 Release 的标题
+          releaseName: "n8n Desktop 手动测试版 (构建 #${{ github.run_number }})"
+          releaseBody: |
+            n8n Desktop 手动触发的单平台/全平台测试构建。
+            触发分支: `${{ github.ref_name }}`
+            打包平台: `${{ github.event.inputs.platform_filter }}`
+          # 手动测试打包，勾选为草稿(draft)或预发布(prerelease)，这样不会打扰到正式用户
+          draft: true
+          prerelease: true
           args: ${{ matrix.args }}
 
-      # 场景 B 延续：上传临时产物
+      # 场景 B 延续：双重保险，依然保留 Artifacts 备份（可选）
       - name: Upload Artifacts (For Manual Trigger)
         if: steps.check.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
