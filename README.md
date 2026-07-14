@@ -4,7 +4,10 @@
 
 A desktop application for n8n built with Tauri, providing a cross-platform local workflow automation experience. This project aims to simplify n8n installation and usage, offering one-click installation: no manual Node.js environment configuration required, no Docker installation needed.
 
-![Application Screenshot](app_screen_short.png)
+![Application Screenshot](/screenshorts/app_screen_short.png)
+
+## tunnel
+![Application Screenshot](/screenshorts/app_screen_short_tunnel.png)
 
 ## 📋 Important Notice
 
@@ -16,7 +19,8 @@ A desktop application for n8n built with Tauri, providing a cross-platform local
 5. **Disclaimer**: Any consequences arising from the use of this project shall be borne by the user, and the project maintainers assume no responsibility.
 
 ### Security Warning
-**Important Security Notice**: This project packages n8n with disabled official restrictions (such as ExecuteCommand nodes).
+**Important Security Notice**
+This application provides a built-in button/option to enable (unblock) nodes that are disabled by default in official n8n (such as the `ExecuteCommand` node).
 
 **Security Risk Warnings**:
 1. **Command Injection Risk**: ExecuteCommand nodes allow execution of system commands, malicious workflows may cause data loss, system damage, or security vulnerabilities
@@ -36,7 +40,7 @@ The developers of this project are not responsible for any data loss caused by u
 - n8n core uses the [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md)
 - Please comply with the respective open-source licenses of each component
 
-## 🚀 Features
+##  Features
 
 - **Cross-Platform Support**: Windows, macOS, Linux full platform support
 - **Automatic Dependency Download**: Automatically downloads Node.js runtime and n8n core packages on first run

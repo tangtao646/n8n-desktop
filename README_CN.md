@@ -4,7 +4,10 @@
 
 一个基于 Tauri 构建的 n8n 桌面应用程序，提供跨平台的本地工作流自动化体验。本项目旨在简化 n8n 的安装和使用，实现一键安装：无需手动配置 Node.js 环境，无需安装 Docker。
 
-![Application Screenshot](app_screen_short.png)
+![Application Screenshot](/screenshorts/app_screen_short.png)
+
+## 隧道
+![Application Screenshot](/screenshorts/app_screen_short_tunnel.png)
 
 ## 📋 重要声明
 
@@ -16,7 +19,7 @@
 5. **免责声明**: 使用本项目产生的任何后果由使用者自行承担，项目维护者不承担任何责任。
 
 ### 安全警告
-**重要安全声明**：本项目打包解禁了 n8n 官方的禁用节点（如：ExecuteCommand 等）。
+**重要安全声明**：本应用对n8n 官方的禁用节点（如：ExecuteCommand 等）提供解禁操作按钮。
 
 **安全风险提示**：
 1. **命令注入风险**：ExecuteCommand 节点允许执行系统命令，恶意工作流可能导致数据丢失、系统损坏或安全漏洞
@@ -36,7 +39,7 @@
 - n8n 核心采用 [Sustainable Use License](https://github.com/n8n-io/n8n/blob/master/LICENSE.md)
 - 请遵守各组件对应的开源协议
 
-## 🚀 功能特性
+##  功能特性
 
 - **跨平台支持**: Windows、macOS、Linux 全平台
 - **自动下载依赖**: 首次运行自动下载 Node.js 运行时和 n8n 核心包
