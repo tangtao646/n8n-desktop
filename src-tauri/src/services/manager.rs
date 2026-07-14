@@ -2,14 +2,17 @@ use crate::i18n;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
 // --- 常量定义 ---
 
 /// Node.js 版本要求
-const NODEJS_VERSION: &str = "v20.19.0";
+const NODEJS_VERSION: &str = "v22.22.0";
+
+/// n8n 运行所需的最低 Node.js 版本
+const MINIMUM_N8N_NODE_VERSION: &str = "v22.22.0";
 
 /// Node.js 官方下载地址
 const NODEJS_BASE_URL: &str = "https://nodejs.org/dist/";
@@ -86,22 +89,103 @@ impl ProcessManager {
 
 /// 获取当前平台的 Node.js 下载 URL
 pub fn get_node_url() -> Result<String, String> {
+    get_node_download_urls()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| i18n::t("runtime.unsupported_platform"))
+}
+
+/// 检查当前 Node.js 版本是否满足 n8n 的最低要求
+fn is_supported_node_version(version: &str) -> bool {
+    let normalized = version.trim().trim_start_matches('v');
+    let mut parts = normalized.split('.');
+
+    let major = parts.next().and_then(|value| value.parse::<u64>().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|value| value.parse::<u64>().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|value| value.parse::<u64>().ok()).unwrap_or(0);
+
+    let min_parts: Vec<u64> = MINIMUM_N8N_NODE_VERSION
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect();
+
+    if min_parts.len() < 3 {
+        return false;
+    }
+
+    (major, minor, patch) >= (min_parts[0], min_parts[1], min_parts[2])
+}
+
+/// 获取兼容 n8n 的 Node.js 版本号
+pub fn get_compatible_node_version() -> String {
+    MINIMUM_N8N_NODE_VERSION.to_string()
+}
+
+/// 获取当前平台的 Node.js 下载候选地址列表
+pub fn get_node_download_urls() -> Result<Vec<String>, String> {
     let platform = env::consts::OS;
     let architecture = env::consts::ARCH;
+    let version = get_compatible_node_version();
 
-    match (platform, architecture) {
-        ("macos", "aarch64") => Ok(format_nodejs_url("darwin-arm64", "tar.gz")),
-        ("macos", "x86_64") => Ok(format_nodejs_url("darwin-x64", "tar.gz")),
-        ("windows", _) => Ok(format_nodejs_url("win-x64", "zip")),
-        _ => Err(format!("{}: {platform} {architecture}", i18n::t("runtime.unsupported_platform"))),
+    let extension = if platform == "windows" { "zip" } else { "tar.gz" };
+    let platform_arch = match (platform, architecture) {
+        ("macos", "aarch64") => "darwin-arm64",
+        ("macos", "x86_64") => "darwin-x64",
+        ("windows", _) => "win-x64",
+        _ => {
+            return Err(format!("{}: {platform} {architecture}", i18n::t("runtime.unsupported_platform")))
+        }
+    };
+
+    let mut urls = vec![format_nodejs_url_for_base(
+        NODEJS_BASE_URL,
+        platform_arch,
+        &version,
+        extension,
+    )];
+
+    if !NODEJS_HUAWEI_MIRROR_URL.is_empty() {
+        urls.push(format_nodejs_url_for_base(
+            NODEJS_HUAWEI_MIRROR_URL,
+            platform_arch,
+            &version,
+            extension,
+        ));
+    }
+
+    Ok(urls)
+}
+
+/// 检查当前运行时目录中的 Node 是否兼容 n8n
+pub fn is_runtime_compatible(runtime_dir: &PathBuf) -> bool {
+    let node_path = get_node_binary_path(runtime_dir.clone());
+    if !node_path.exists() {
+        return false;
+    }
+
+    let output = Command::new(&node_path).arg("--version").output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            is_supported_node_version(&version)
+        }
+        _ => false,
     }
 }
 
 /// 格式化 Node.js 下载 URL
 fn format_nodejs_url(platform_arch: &str, extension: &str) -> String {
+    format_nodejs_url_for_base(NODEJS_BASE_URL, platform_arch, &get_compatible_node_version(), extension)
+}
+
+fn format_nodejs_url_for_base(base_url: &str, platform_arch: &str, version: &str, extension: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let version_key = version.trim_start_matches('v');
+    let version_path = format!("v{version_key}");
     format!(
         "{}/{}/node-{}-{}.{}",
-        NODEJS_BASE_URL, NODEJS_VERSION, NODEJS_VERSION, platform_arch, extension
+        base, version_path, version_path, platform_arch, extension
     )
 }
 
@@ -363,6 +447,21 @@ mod tests {
         assert!(url.contains(NODEJS_VERSION));
         assert!(url.contains("darwin-arm64"));
         assert!(url.ends_with(".tar.gz"));
+    }
+
+    #[test]
+    fn test_node_version_compatibility_check() {
+        assert!(!is_supported_node_version("v20.19.0"));
+        assert!(is_supported_node_version("v22.22.0"));
+        assert!(is_supported_node_version("v22.22.1"));
+        assert!(is_supported_node_version("v23.0.0"));
+    }
+
+    #[test]
+    fn test_node_download_urls_include_mirror() {
+        let urls = get_node_download_urls().expect("should build download urls");
+        assert!(!urls.is_empty());
+        assert!(urls[0].contains("nodejs.org/dist"));
     }
 
     #[test]

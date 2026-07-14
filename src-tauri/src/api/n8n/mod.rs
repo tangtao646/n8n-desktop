@@ -40,17 +40,44 @@ pub async fn setup_runtime<R: Runtime>(window: Window<R>) -> N8nResult<()> {
         .map_err(|e| N8nCoreError::Path(e.to_string()))?
         .join("runtime");
 
-    // 如果运行时已存在且二进制文件可找到，跳过
-    if manager::get_node_binary_path(runtime_dir.clone()).exists() {
+    let node_path = manager::get_node_binary_path(runtime_dir.clone());
+    let runtime_is_compatible = node_path.exists() && manager::is_runtime_compatible(&runtime_dir);
+
+    if runtime_is_compatible {
+        println!("[n8n][setup_runtime] 已存在兼容的 Node 运行时，跳过下载");
         return Ok(());
     }
 
-    let url = manager::get_node_url().map_err(N8nCoreError::Installation)?;
+    if runtime_dir.exists() {
+        println!("[n8n][setup_runtime] 发现旧的或不兼容的运行时，准备强制重装");
+        let _ = fs::remove_dir_all(&runtime_dir);
+    }
 
-    // 下载逻辑内部应处理好解压
-    downloader::download_file(window, url, runtime_dir, "runtime".to_string())
-        .await
-        .map_err(N8nCoreError::Installation)
+    let urls = manager::get_node_download_urls().map_err(N8nCoreError::Installation)?;
+    let mut last_error: Option<String> = None;
+
+    for url in urls {
+        println!("[n8n][setup_runtime] 尝试下载运行时: {url}");
+        match downloader::download_file(window.clone(), url.clone(), runtime_dir.clone(), "runtime".to_string()).await {
+            Ok(()) => {
+                let rechecked_path = manager::get_node_binary_path(runtime_dir.clone());
+                if rechecked_path.exists() && manager::is_runtime_compatible(&runtime_dir) {
+                    println!("[n8n][setup_runtime] 运行时下载并验证成功: {url}");
+                    return Ok(());
+                }
+
+                eprintln!("[n8n][setup_runtime] 下载完成但运行时仍不兼容: {url}");
+            }
+            Err(err) => {
+                eprintln!("[n8n][setup_runtime] 运行时下载失败 ({url}): {err}");
+                last_error = Some(err);
+            }
+        }
+    }
+
+    Err(N8nCoreError::Installation(last_error.unwrap_or_else(|| {
+        i18n::t("runtime.unsupported_platform")
+    })))
 }
 
 /// 安装 n8n 核心包 (下载 + 解压，带 SHA256 验证)
