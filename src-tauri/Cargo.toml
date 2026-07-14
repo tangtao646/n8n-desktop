@@ -28,8 +28,8 @@ thiserror = "1.0"
 regex = "1.10"
 
 # 2. 插件：使用与主版本兼容的版本
-tauri-plugin-shell = "2.9.0"
-tauri-plugin-fs = "2.9.0"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-fs = "2.3.5"
 
 # 3. 其他逻辑
 tokio = { version = "1", features = ["full"] }
