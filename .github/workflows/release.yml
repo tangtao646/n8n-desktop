@@ -2,6 +2,9 @@ name: Build & Release
 
 on:
   # 1. 依然保留原有的 Tag 触发（正式发布）
+  #可使用如下命令构建release包：
+  # git tag -a v1.0.4 -m "release: n8n Desktop v1.0.4 正式版"
+  # git push origin v1.0.4
   push:
     tags:
       - 'v*'
